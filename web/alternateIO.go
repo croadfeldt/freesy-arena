@@ -9,7 +9,7 @@ import (
 	//"github.com/Team254/cheesy-arena/game"
 	//"github.com/Team254/cheesy-arena/model"
 	"encoding/json"
-	"log"
+	//"log"
 	"net/http"
 	"strconv"
 	"strings"
