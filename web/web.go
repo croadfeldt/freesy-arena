@@ -115,10 +115,12 @@ func (web *Web) indexHandler(w http.ResponseWriter, r *http.Request) {
 
 // Adds a "Cache-Control: no-cache" header to the given handler to force browser validation of last modified time.
 func addNoCacheHeader(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Cache-Control", "no-cache")
-		handler.ServeHTTP(w, r)
-	})
+	return http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Add("Cache-Control", "no-cache")
+			handler.ServeHTTP(w, r)
+		},
+	)
 }
 
 // Sets up the mapping between URLs and handlers.
@@ -191,6 +193,7 @@ func (web *Web) newHandler() http.Handler {
 	mux.HandleFunc("GET /reports/pdf/bracket", web.bracketPdfReportHandler)
 	mux.HandleFunc("GET /reports/pdf/coupons", web.couponsPdfReportHandler)
 	mux.HandleFunc("GET /reports/pdf/cycle/{type}", web.cyclePdfReportHandler)
+	mux.HandleFunc("GET /reports/pdf/judging_schedule", web.judgingSchedulePdfReportHandler)
 	mux.HandleFunc("GET /reports/pdf/rankings", web.rankingsPdfReportHandler)
 	mux.HandleFunc("GET /reports/pdf/schedule/{type}", web.schedulePdfReportHandler)
 	mux.HandleFunc("GET /reports/pdf/teams", web.teamsPdfReportHandler)
@@ -205,6 +208,9 @@ func (web *Web) newHandler() http.Handler {
 	mux.HandleFunc("GET /setup/displays/websocket", web.displaysWebsocketHandler)
 	mux.HandleFunc("GET /setup/field_testing", web.fieldTestingGetHandler)
 	mux.HandleFunc("GET /setup/field_testing/websocket", web.fieldTestingWebsocketHandler)
+	mux.HandleFunc("GET /setup/judging", web.judgingGetHandler)
+	mux.HandleFunc("POST /setup/judging/clear", web.judgingClearPostHandler)
+	mux.HandleFunc("POST /setup/judging/generate", web.judgingGeneratePostHandler)
 	mux.HandleFunc("GET /setup/lower_thirds", web.lowerThirdsGetHandler)
 	mux.HandleFunc("GET /setup/lower_thirds/websocket", web.lowerThirdsWebsocketHandler)
 	mux.HandleFunc("GET /setup/schedule", web.scheduleGetHandler)

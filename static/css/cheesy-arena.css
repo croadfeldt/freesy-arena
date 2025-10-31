@@ -97,13 +97,16 @@
 .badge-scoring[data-ready=true] {
   background-color: #0c6;
 }
+.badge-scoring[data-present=false] {
+  background-color: #666;
+}
 .badge-status {
   background-color: #e66;
 }
 .badge-status[data-status=BOOTING] {
   background-color: #f92;
 }
-.badge-status[data-status=CONFIGURING] {
+.badge-status[data-status=CONFIGURING], .badge-status[data-status=DISABLED] {
   background-color: #08f;
 }
 .badge-status[data-status=ACTIVE] {
@@ -162,4 +165,11 @@ input[data-changed="true"], select[data-changed="true"] {
 }
 #testMatchSettings {
   display: none;
+}
+
+/* Placeholder styles for input fields*/
+.col-lg-6 input::placeholder {
+    color: #ff0000; /* Red placeholder text */
+    font-style: italic;
+    opacity: 0.4;
 }

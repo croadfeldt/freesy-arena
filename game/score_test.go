@@ -266,13 +266,39 @@ func TestScoreBargeBonusRankingPoint(t *testing.T) {
 	}
 
 	for i, tc := range testCases {
-		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			BargeBonusPointThreshold = tc.threshold
-			score := Score{EndgameStatuses: tc.endgameStatuses, Fouls: tc.fouls}
-			summary := score.Summarize(&Score{})
-			assert.Equal(t, tc.expectedBonusAwarded, summary.BargeBonusRankingPoint)
-		})
+		t.Run(
+			strconv.Itoa(i),
+			func(t *testing.T) {
+				BargeBonusPointThreshold = tc.threshold
+				score := Score{EndgameStatuses: tc.endgameStatuses, Fouls: tc.fouls}
+				summary := score.Summarize(&Score{})
+				assert.Equal(t, tc.expectedBonusAwarded, summary.BargeBonusRankingPoint)
+			},
+		)
 	}
+}
+
+func TestScoreBargeBonusRankingPointIncludingAlgae(t *testing.T) {
+	// Save the original setting and restore it after the test.
+	originalIncludeAlgae := IncludeAlgaeInBargeBonus
+	defer func() {
+		IncludeAlgaeInBargeBonus = originalIncludeAlgae
+	}()
+
+	IncludeAlgaeInBargeBonus = false
+	BargeBonusPointThreshold = 36
+
+	score := Score{
+		EndgameStatuses: [3]EndgameStatus{EndgameDeepCage, EndgameDeepCage, EndgameParked},
+		BargeAlgae:      1,
+		ProcessorAlgae:  1,
+	}
+	summary := score.Summarize(&Score{})
+	assert.Equal(t, false, summary.BargeBonusRankingPoint)
+
+	IncludeAlgaeInBargeBonus = true
+	summary = score.Summarize(&Score{})
+	assert.Equal(t, true, summary.BargeBonusRankingPoint)
 }
 
 func TestScoreAutoRankingPointFromFouls(t *testing.T) {
@@ -332,23 +358,26 @@ func TestScoreAutoRankingPointFromFouls(t *testing.T) {
 	}
 
 	for i, tc := range testCases {
-		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			redScore := Score{Fouls: tc.ownFouls}
-			blueScore := Score{Fouls: tc.opponentFouls}
-			redSummary := redScore.Summarize(&blueScore)
-			assert.Equal(t, tc.expectedCoralBonus, redSummary.CoralBonusRankingPoint)
-			assert.Equal(t, tc.expectedBargeBonus, redSummary.BargeBonusRankingPoint)
+		t.Run(
+			strconv.Itoa(i),
+			func(t *testing.T) {
+				redScore := Score{Fouls: tc.ownFouls}
+				blueScore := Score{Fouls: tc.opponentFouls}
+				redSummary := redScore.Summarize(&blueScore)
+				assert.Equal(t, tc.expectedCoralBonus, redSummary.CoralBonusRankingPoint)
+				assert.Equal(t, tc.expectedBargeBonus, redSummary.BargeBonusRankingPoint)
 
-			// Count expected total bonus ranking points.
-			expectedBonusRankingPoints := 0
-			if tc.expectedCoralBonus {
-				expectedBonusRankingPoints++
-			}
-			if tc.expectedBargeBonus {
-				expectedBonusRankingPoints++
-			}
-			assert.Equal(t, expectedBonusRankingPoints, redSummary.BonusRankingPoints)
-		})
+				// Count expected total bonus ranking points.
+				expectedBonusRankingPoints := 0
+				if tc.expectedCoralBonus {
+					expectedBonusRankingPoints++
+				}
+				if tc.expectedBargeBonus {
+					expectedBonusRankingPoints++
+				}
+				assert.Equal(t, expectedBonusRankingPoints, redSummary.BonusRankingPoints)
+			},
+		)
 	}
 }
 

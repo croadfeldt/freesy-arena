@@ -86,6 +86,13 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.ApChannel, _ = strconv.Atoi(r.PostFormValue("apChannel"))
 	eventSettings.SwitchAddress = r.PostFormValue("switchAddress")
 	eventSettings.SwitchPassword = r.PostFormValue("switchPassword")
+	eventSettings.SCCManagementEnabled = r.PostFormValue("sccManagementEnabled") == "on"
+	eventSettings.RedSCCAddress = r.PostFormValue("redSCCAddress")
+	eventSettings.BlueSCCAddress = r.PostFormValue("blueSCCAddress")
+	eventSettings.SCCUsername = r.PostFormValue("sccUsername")
+	eventSettings.SCCPassword = r.PostFormValue("sccPassword")
+	eventSettings.SCCUpCommands = r.PostFormValue("sccUpCommands")
+	eventSettings.SCCDownCommands = r.PostFormValue("sccDownCommands")
 	eventSettings.PlcAddress = r.PostFormValue("plcAddress")
 	eventSettings.AdminPassword = r.PostFormValue("adminPassword")
 	eventSettings.TeamSignRed1Id, _ = strconv.Atoi(r.PostFormValue("teamSignRed1Id"))
@@ -96,6 +103,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.TeamSignBlue2Id, _ = strconv.Atoi(r.PostFormValue("teamSignBlue2Id"))
 	eventSettings.TeamSignBlue3Id, _ = strconv.Atoi(r.PostFormValue("teamSignBlue3Id"))
 	eventSettings.TeamSignBlueTimerId, _ = strconv.Atoi(r.PostFormValue("teamSignBlueTimerId"))
+	eventSettings.UseLiteUdpPort = r.PostFormValue("useLiteUdpPort") == "on"
 	eventSettings.BlackmagicAddresses = r.PostFormValue("blackmagicAddresses")
 	eventSettings.WarmupDurationSec, _ = strconv.Atoi(r.PostFormValue("warmupDurationSec"))
 	eventSettings.AutoDurationSec, _ = strconv.Atoi(r.PostFormValue("autoDurationSec"))
@@ -106,6 +114,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.CoralBonusPerLevelThreshold, _ = strconv.Atoi(r.PostFormValue("coralBonusPerLevelThreshold"))
 	eventSettings.CoralBonusCoopEnabled = r.PostFormValue("coralBonusCoopEnabled") == "on"
 	eventSettings.BargeBonusPointThreshold, _ = strconv.Atoi(r.PostFormValue("bargeBonusPointThreshold"))
+	eventSettings.IncludeAlgaeInBargeBonus = r.PostFormValue("includeAlgaeInBargeBonus") == "on"
 
 	err := web.arena.Database.UpdateEventSettings(eventSettings)
 	if err != nil {
@@ -137,8 +146,9 @@ func (web *Web) saveDbHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filename := fmt.Sprintf("%s-%s.db", strings.Replace(web.arena.EventSettings.Name, " ", "_", -1),
-		time.Now().Format("20060102150405"))
+	filename := fmt.Sprintf(
+		"%s-%s.db", strings.Replace(web.arena.EventSettings.Name, " ", "_", -1), time.Now().Format("20060102150405"),
+	)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 
 	if err := web.arena.Database.WriteBackup(w); err != nil {
@@ -176,8 +186,9 @@ func (web *Web) restoreDbHandler(w http.ResponseWriter, r *http.Request) {
 	tempFile.Close()
 	tempDb, err := model.OpenDatabase(tempFilePath)
 	if err != nil {
-		web.renderSettings(w, r, "Could not read uploaded database backup file. Please verify that it a valid "+
-			"database file.")
+		web.renderSettings(
+			w, r, "Could not read uploaded database backup file. Please verify that it a valid database file.",
+		)
 		return
 	}
 	tempDb.Close()

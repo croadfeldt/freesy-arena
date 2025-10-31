@@ -66,7 +66,7 @@ var redColor = color.RGBA{255, 0, 0, 255}
 var blueColor = color.RGBA{0, 50, 255, 255}
 var greenColor = color.RGBA{0, 255, 0, 255}
 var orangeColor = color.RGBA{255, 50, 0, 255}
-var purpleColor = color.RGBA{255, 0, 255, 255}
+var purpleColor = color.RGBA{255, 0, 240, 255}
 var whiteColor = color.RGBA{255, 200, 180, 255}
 
 // Creates a new collection of team signs.
@@ -340,7 +340,11 @@ func (sign *TeamSign) generateTeamNumberTexts(
 		// where to go.
 		rearText = fmt.Sprintf("Next Team Up: %d", sign.nextMatchTeamId)
 	} else if len(message) > 0 {
-		rearText = fmt.Sprintf("%-5d %14s", allianceStation.Team.Id, message)
+		teamId := 0
+		if allianceStation.Team != nil {
+			teamId = allianceStation.Team.Id
+		}
+		rearText = fmt.Sprintf("%-5d %14s", teamId, message)
 	} else {
 		rearText = inMatchRearText
 	}
@@ -383,7 +387,7 @@ func (sign *TeamSign) sendPacket() error {
 		sign.lastRearText = sign.rearText
 	}
 
-	if sign.packetIndex > teamSignPacketHeaderLength {
+	if sign.packetIndex > teamSignPacketHeaderLength && sign.udpConn != nil {
 		sign.lastPacketTime = time.Now()
 		if _, err := sign.udpConn.Write(sign.packetData[:sign.packetIndex]); err != nil {
 			return err

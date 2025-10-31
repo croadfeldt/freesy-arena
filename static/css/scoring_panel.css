@@ -250,9 +250,16 @@ main {
 }
 
 #bottom-controls {
-  padding: 10px 0;
+  padding: 10px 1em;
   display: flex;
   justify-content: space-around;
+}
+
+#l1-total {
+  margin-top: 10px;
+  color: var(--text-active);
+  font-size: 18pt;
+  font-weight: bold;
 }
 
 #commit {
@@ -352,11 +359,13 @@ main {
 #reef-controls-warning {
   position: absolute;
   height: 100%;
-  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
 }
 
-[data-editing-auto="true"] #reef-controls-warning {
-  visibility: visible;
+[data-scoring-auto="true"][data-in-teleop="true"] #reef-controls-warning {
+  opacity: 1;
+  transition: opacity 0.2s ease-in-out;
 }
 
 .reef-column {
@@ -424,7 +433,7 @@ main {
   visibility: hidden;
 }
 
-[data-editing-auto="true"] #edit-auto {
+[data-scoring-auto="true"] #edit-auto {
   background-color: var(--green-action);
   color: var(--text-active);
 }
@@ -489,7 +498,22 @@ main {
 }
 
 .counter-value {
+  font-weight: bold;
+}
+
+.counter-main-value {
   font-size: 28pt;
+  transition: font-size 0.2s ease-in-out;
+}
+
+.counter-main-clone {
+  font-size: 0;
+  transition: font-size 0.2s ease-in-out;
+}
+
+.counter-auto-value {
+  font-size: 12pt;
+  transition: font-size 0.2s ease-in-out;
   font-weight: bold;
 }
 
@@ -501,6 +525,19 @@ main {
   justify-content: center;
   align-items: center;
   gap: 0.1em;
+  font-size: 12pt;
+  transition: font-size 0.2s ease-in-out;
+}
+
+[data-scoring-auto="true"] .counter-auto-row,
+[data-scoring-auto="true"] .counter-status:has(.counter-auto-row) .counter-main-value {
+  font-size: 0pt;
+}
+[data-scoring-auto="true"] .counter-auto-value {
+  font-size: 28pt;
+}
+[data-scoring-auto="true"] .counter-main-clone {
+  font-size: 12pt;
 }
 
 .counter:has(button:enabled) .counter-auto-row {
@@ -509,11 +546,23 @@ main {
   box-shadow: black 0px 0px 2px;
 }
 
-.counter-auto-value {
+#fouls-button {
+  flex: 0.5 0.5 0%;
+  border-radius: var(--button-border-radius);
+  color: var(--text-active-dark);
+  height: 100%;
+  background-color: var(--auto-action);
+  font-size: 18pt;
   font-weight: bold;
+  padding: 0.2em;
 }
 
-#endgame-dialog {
+#fouls-button:disabled {
+  color: var(--text-inactive-dark);
+  background-color: var(--auto-inactive);
+}
+
+dialog {
   padding: 0;
   border: none;
   border-radius: 16px;
@@ -523,7 +572,7 @@ main {
   background-color: var(--alliance-overlay-background);
 }
 
-#endgame-dialog-container {
+.dialog-container {
   max-width: 700px;
   width: 80vw;
   padding-bottom: 20px;
@@ -531,13 +580,13 @@ main {
   flex-direction: column;
 }
 
-#endgame-dialog::backdrop {
+dialog::backdrop {
   background-color: rgba(0, 0, 0, 0.75);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }
 
-#endgame-banner {
+.dialog-banner {
   padding: 5px;
   font-size: 24pt;
   font-weight: bold;
@@ -580,8 +629,44 @@ main {
   background-color: var(--alliance-highlight);
 }
 
-#endgame-close {
+.dialog-close {
   padding: 20px;
   width: 29%;
   align-self: center;
+  border: none;
+  outline: none;
+  border-radius: var(--button-border-radius);
+  background-color: var(--neutral-action);
+  color: var(--text-active);
+}
+
+#fouls-dialog button {
+  cursor: auto;
+  height: 68px;
+  border-radius: var(--button-border-radius);
+}
+
+#foul-container {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  align-self: center;
+  gap: 20px;
+  padding: 20px;
+}
+
+#foul-container .foul-button {
+  height: 120px;
+  width: 300px;
+}
+
+.foul-button.red {
+  background-color: var(--red-action);
+}
+.foul-button.blue {
+  background-color: var(--blue-action);
+}
+
+.foul-button-label {
+  font-size: 24pt;
+  font-weight: bold;
 }

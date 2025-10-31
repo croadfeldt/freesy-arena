@@ -138,8 +138,12 @@ func (web *Web) scoringPanelWebsocketHandler(w http.ResponseWriter, r *http.Requ
 	ws.Write("resetLocalState", nil)
 
 	// Subscribe the websocket to the notifiers whose messages will be passed on to the client, in a separate goroutine.
-	go ws.HandleNotifiers(web.arena.MatchLoadNotifier, web.arena.MatchTimeNotifier, web.arena.RealtimeScoreNotifier,
-		web.arena.ReloadDisplaysNotifier)
+	go ws.HandleNotifiers(
+		web.arena.MatchLoadNotifier,
+		web.arena.MatchTimeNotifier,
+		web.arena.RealtimeScoreNotifier,
+		web.arena.ReloadDisplaysNotifier,
+	)
 
 	// Loop, waiting for commands and responding to them, until the client closes the connection.
 	for {
@@ -220,6 +224,27 @@ func (web *Web) scoringPanelWebsocketHandler(w http.ResponseWriter, r *http.Requ
 				score.LeaveStatuses[args.TeamPosition-1] = !score.LeaveStatuses[args.TeamPosition-1]
 				scoreChanged = true
 			}
+		} else if command == "addFoul" {
+			args := struct {
+				Alliance string
+				IsMajor  bool
+			}{}
+			err = mapstructure.Decode(data, &args)
+			if err != nil {
+				ws.WriteError(err.Error())
+				continue
+			}
+
+			// Add the foul to the correct alliance's list.
+			foul := game.Foul{IsMajor: args.IsMajor}
+			if args.Alliance == "red" {
+				web.arena.RedRealtimeScore.CurrentScore.Fouls =
+					append(web.arena.RedRealtimeScore.CurrentScore.Fouls, foul)
+			} else {
+				web.arena.BlueRealtimeScore.CurrentScore.Fouls =
+					append(web.arena.BlueRealtimeScore.CurrentScore.Fouls, foul)
+			}
+			web.arena.RealtimeScoreNotifier.Notify()
 		} else {
 			args := struct {
 				Adjustment int
