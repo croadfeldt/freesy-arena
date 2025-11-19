@@ -1,6 +1,9 @@
 ---
-# Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format:
-# ansible-playbook -e '{"subnets_input": ["192.168.10.0/24", "192.168.20.0/24", "192.168.30.0/24", "192.168.40.0/24", "192.168.50.0/24", "192.168.60.0/24"]}' config_dhcp.yaml
+# Ansible Playbook: Configure custom DHCP file and network interfaces (6 VLANs)
+
+# Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format,
+# providing a list of team numbers:
+# ansible-playbook -e '{"team_numbers": [101, 55, 1234, 12345, 999, 10] }' config_dhcp.yaml
 #
 - name: Configure custom DHCP file and network interfaces (6 VLANs)
   hosts: localhost
@@ -22,6 +25,8 @@
       - { id: 50, name: "RED2" }
       - { id: 60, name: "RED3" }
     # ------------------------------------
+    # Placeholder variable that will hold the calculated subnets
+    subnets_input: [] 
 
   tasks:
     - name: Ensure the target directory exists
@@ -32,12 +37,18 @@
         group: cheesy
         mode: '0755'
 
-    - name: Validate that 'subnets_input' is provided and correct length
+    - name: Validate that 'team_numbers' is provided and correct length
       ansible.builtin.assert:
         that:
-          - subnets_input is defined
-          - subnets_input | length == 6
-        fail_msg: "subnets_input must be defined as a list of exactly 6 subnets. Use the JSON command line format shown in the playbook comments."
+          - team_numbers is defined
+          - team_numbers | length == 6
+        fail_msg: "team_numbers must be defined as a list of exactly 6 numbers. Use the JSON command line format shown in the playbook comments."
+
+    # --- NEW TASK: Convert team numbers to subnets using custom filter ---
+    - name: Dynamically generate the list of CIDR subnets from team numbers
+      ansible.builtin.set_fact:
+        # We use the custom Python filter 'generate_subnet_filter' here
+        subnets_input: "{{ team_numbers | map('generate_subnet_filter') | list }}"
 
     - name: Prepare subnet details dictionary (for DHCP file generation)
       ansible.builtin.set_fact:
