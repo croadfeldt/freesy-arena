@@ -47,26 +47,36 @@
           - team_numbers | length == 6
         fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
 
-    # We skip generating subnets for invalid entries but keep the list the same length
+    # We skip generating subnets for invalid entries but keep the list the same length temporarily
     - name: Dynamically generate the list of CIDR subnets details from team numbers
       ansible.builtin.set_fact:
         subnets_details: >-
           {% set final_list = [] %}
           {% for team in team_numbers %}
-            {% if team is defined and team != '' and team != -1 %}
+            {% if team is defined and team != '' and team != -1 and team != 0 %}
               {% set _ = final_list.append(team | generate_subnet_details_filter) %}
             {% else %}
+              {# Append 'omit' so the zip filter removes this index entirely #}
               {% set _ = final_list.append(omit) %}
             {% endif %}
           {% endfor %}
           {{ final_list }}
 
-    # Combine the configurations immediately
+    # Combine the configurations immediately. Zip causes 'omit' items to be removed from the list entirely.
     - name: Combine team data with original vlan config data
       ansible.builtin.set_fact:
         combined_config_data: "{{ vlan_configs | zip(subnets_details) | list }}"
-      # The omit value causes zip to skip the item entirely, resulting in a shorter list of *active* configs
-      # This is a safe way to handle the subsequent loops which expect valid subnet details
+      # The resulting list 'combined_config_data' only contains valid configs for active teams.
+
+    # --- New Task: Ensure non-active VLAN interfaces are removed ---
+    - name: Remove VLAN interfaces that do not have an active team assigned
+      community.general.nmcli:
+        conn_name: "{{ item.name }}"
+        state: absent
+      loop: "{{ vlan_configs }}" # Loop through ALL original VLANs
+      # Only run this task for items that are NOT present in the final combined_config_data list
+      when: item.name not in combined_config_data | map(attribute='0.name') | list
+    # ---------------------------------------------------------------
 
     - name: Generate the dhcpd-frc.conf file from template (only contains active teams)
       ansible.builtin.template:
@@ -75,12 +85,12 @@
         owner: root
         group: dhcpd
         mode: '0640'
-      # The template logic itself must also handle which subnets to render
+      # This task uses the filtered combined_config_data
       notify:
         - Restart dhcpd service
       when: combined_config_data | length > 0
-
-    # ... [SELinux and include tasks remain the same as they depend on the file existing] ...
+    
+    # The remaining tasks iterate ONLY over the valid (non-omitted/zipped) configurations
 
     - name: Check if SELinux is enabled
       ansible.builtin.command: getenforce
@@ -108,7 +118,6 @@
       notify:
         - Restart dhcpd service
     
-    # nmcli tasks iterate ONLY over the valid (non-omitted/zipped) configurations
     - name: Ensure VLAN interfaces are configured with static IPs and custom names for valid teams
       community.general.nmcli:
         conn_name: "{{ item.0.name }}"
@@ -122,17 +131,13 @@
         autoconnect: yes
       loop: "{{ combined_config_data }}"
       register: nmcli_status
-      when: combined_config_data | length > 0
-
 
     - name: Activate VLAN interfaces if configured or modified
       community.general.nmcli:
         conn_name: "{{ item.0.name }}"
         state: up
       loop: "{{ combined_config_data }}"
-      when: 
-        - nmcli_status is changed
-        - combined_config_data | length > 0
+      when: nmcli_status is changed or nmcli_status is not changed # simplified loop condition
 
   handlers:
     - name: Restart dhcpd service

@@ -4,7 +4,7 @@ authoritative;
 
 # DHCP options for each subnet
 {% for vlan, subnet in combined_config_data %}
-{# Ensure that a valid subnet dictionary exists before trying to access its attributes #}
+{# Safety check for undefined values #}
 {% if subnet is not ansibleundefined and subnet is not omitted %}
 # Subnet configuration for VLAN {{ vlan.id }} ({{ vlan.name }})
 subnet {{ subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask {{ subnet.netmask }} {
