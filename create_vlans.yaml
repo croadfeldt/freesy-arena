@@ -61,6 +61,14 @@
       when: semanage_results.changed
       ignore_errors: yes
 
+    - name: Ensure the parent interface ({{ parent_interface }}) is active
+      community.general.nmcli:
+        conn_name: "{{ parent_interface }}"
+        state: up
+        # Add a timeout if the interface takes time to come up
+        # wait: yes
+        # timeout: 30
+
     - name: Configure and activate VLAN connections using NetworkManager (nmcli)
       community.general.nmcli:
         type: vlan
@@ -70,19 +78,18 @@
         vlanid: "{{ item.id }}"
         autoconnect: yes
         state: present
-        ip4: [] # Explicitly remove any IPv4 addresses
+        ip4: []
         ip6: []
         method4: disabled
         method6: disabled
       loop: "{{ vlans_to_create }}"
       register: nmcli_vlan_results
 
-    - name: Activate VLAN connections if modified
+    - name: Activate VLAN connections
       community.general.nmcli:
         conn_name: "{{ item.name }}"
         state: up
       loop: "{{ vlans_to_create }}"
-      when: nmcli_vlan_results.changed
 
     - name: Verify NetworkManager connection status for the new interfaces
       ansible.builtin.debug:
@@ -98,9 +105,12 @@
         macvlan:
           parent: "{{ item.parent }}"
           mode: "{{ item.mode }}"
-        ip4: "{{ item.ip4 }}"
-        gw4: "{{ item.gw4 }}"
-        dns4: "{{ item.dns4 }}"
+        ip4: "{{ item.ip4 | default([]) }}"
+        ip6: "{{ item.ip6 | default([]) }}"
+        gw4: "{{ item.gw4 | default([]) }}"
+        gw6: "{{ item.gw6 | default([]) }}"
+        dns4: "{{ item.dns4 | default([]) }}"
+        dns6: "{{ item.dns6 | default([]) }}"
         autoconnect: yes
         state: present
         method4: manual
@@ -108,12 +118,11 @@
       loop: "{{ macvlans_to_create }}"
       register: nmcli_macvlan_results
 
-    - name: Activate macvlan connections if modified
+    - name: Activate macvlan connections
       community.general.nmcli:
         conn_name: "{{ item.name }}"
         state: up
       loop: "{{ macvlans_to_create }}"
-      when: nmcli_macvlan_results.changed
 
     - name: Verify NetworkManager connection status for the new interfaces
       ansible.builtin.debug:
