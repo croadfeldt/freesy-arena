@@ -111,11 +111,6 @@
       # Only run this task if the previous nmcli task changed something
       when: nmcli_status.changed
 
-    - name: Ensure the old Admin VLAN connection is absent
-      community.general.nmcli:
-        conn_name: "Admin"
-        state: absent
-
   handlers:
     - name: Confirm file generation
       ansible.builtin.debug:
