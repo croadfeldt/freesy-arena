@@ -48,7 +48,6 @@
         # We use the custom Python filter 'generate_subnet_details_filter' here
         subnets_details: "{{ team_numbers | map('generate_subnet_details_filter') | list }}"
 
-    # --- Add these debug steps ---
     - name: Debug - Show the generated subnets details
       ansible.builtin.debug:
         var: subnets_details
@@ -60,8 +59,7 @@
           IPAddr Output: {{ item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') }} |
           Jinja Type: {{ (item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address')).__class__.__name__ }}
       loop: "{{ subnets_details }}"
-    # --- End Debug steps ---
-
+    
     - name: Generate the dhcpd-frc.conf file from template
       ansible.builtin.template:
         src: templates/dhcpd-frc.conf.j2
@@ -95,11 +93,15 @@
         method4: manual
         autoconnect: yes
       loop: "{{ vlan_configs | zip(subnets_details) | list }}"
+      register: nmcli_status
 
-    - name: Ensure the old Admin VLAN connection is absent
+    - name: Activate VLAN interfaces if configured or modified
       community.general.nmcli:
-        conn_name: "Admin"
-        state: absent
+        conn_name: "{{ item.0.name }}"
+        state: up
+      loop: "{{ vlan_configs | zip(subnets_details) | list }}"
+      # Only run this task if the previous nmcli task changed something
+      when: nmcli_status.changed
 
   handlers:
     - name: Confirm file generation
