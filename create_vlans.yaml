@@ -31,6 +31,8 @@
         vlanid: "{{ item.id }}"
         autoconnect: yes # Ensures it comes up after a reboot
         state: present   # Ensures the connection exists and is active
+        ip4: []
+        ip6: []
         method4: disabled
         method6: disabled
         # Leave IP settings blank to use automatic configuration/DHCP if available
