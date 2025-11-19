@@ -3,39 +3,63 @@
 
 from ansible.errors import AnsibleFilterError
 
+import logging
+# Add logging configuration to your python filter file
+logging.basicConfig(filename='/tmp/ansible_filter_debug.log', level=logging.DEBUG)
+
 def generate_subnet_filter(team_number):
-    """
-    Generates a subnet string (e.g., '10.12.34.0/24') based on team number rules.
-    """
+    logging.debug(f"DEBUG FILTER: Received team number: {team_number}")
     try:
-        team_num_str = str(team_number)
+        # Your existing logic goes here
+        # Example: if an error happens here, the log will show the input that failed
+        if not isinstance(team_number, int):
+             logging.error(f"DEBUG FILTER: Invalid type received: {type(team_number)}")
+             return None # This would cause your error
         
-        if not 1 <= len(team_num_str) <= 5:
-            raise ValueError(f"Team number {team_number} has an invalid length.")
-
-        first_octet = 10
-        second_octet = 0
-        third_octet = 0
-        fourth_octet = 0
-        netmask = 24
-
-        if len(team_num_str) <= 3:
-            # Team 123 -> 10.0.123.0
-            third_octet = int(team_num_str)
-        elif len(team_num_str) == 4:
-            # Team 1234 -> 10.12.34.0
-            second_octet = int(team_num_str[:2])
-            third_octet = int(team_num_str[2:])
-        elif len(team_num_str) == 5:
-            # Team 12345 -> 10.123.45.0
-            second_octet = int(team_num_str[:3])
-            third_octet = int(team_num_str[3:])
-
-        subnet_cidr = f"{first_octet}.{second_octet}.{third_octet}.{fourth_octet}/{netmask}"
-        return subnet_cidr
+        # ... your calculation logic ...
+        subnet = f"10.10.{team_number % 256}.0/24" # Example logic
+        
+        logging.debug(f"DEBUG FILTER: Returning subnet: {subnet}")
+        return subnet
 
     except Exception as e:
-        raise AnsibleFilterError(f'Subnet filter failed for input {team_number}: {e}')
+        logging.error(f"DEBUG FILTER: An error occurred for team {team_number}: {e}")
+        return None 
+
+
+# def generate_subnet_filter(team_number):
+#     """
+#     Generates a subnet string (e.g., '10.12.34.0/24') based on team number rules.
+#     """
+#     try:
+#         team_num_str = str(team_number)
+        
+#         if not 1 <= len(team_num_str) <= 5:
+#             raise ValueError(f"Team number {team_number} has an invalid length.")
+
+#         first_octet = 10
+#         second_octet = 0
+#         third_octet = 0
+#         fourth_octet = 0
+#         netmask = 24
+
+#         if len(team_num_str) <= 3:
+#             # Team 123 -> 10.0.123.0
+#             third_octet = int(team_num_str)
+#         elif len(team_num_str) == 4:
+#             # Team 1234 -> 10.12.34.0
+#             second_octet = int(team_num_str[:2])
+#             third_octet = int(team_num_str[2:])
+#         elif len(team_num_str) == 5:
+#             # Team 12345 -> 10.123.45.0
+#             second_octet = int(team_num_str[:3])
+#             third_octet = int(team_num_str[3:])
+
+#         subnet_cidr = f"{first_octet}.{second_octet}.{third_octet}.{fourth_octet}/{netmask}"
+#         return subnet_cidr
+
+#     except Exception as e:
+#         raise AnsibleFilterError(f'Subnet filter failed for input {team_number}: {e}')
 
 
 class FilterModule(object):
