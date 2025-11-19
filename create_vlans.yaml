@@ -1,0 +1,50 @@
+---
+- name: Create specified VLANs on the local Fedora system using NetworkManager
+  # Targets the local machine itself
+  hosts: localhost
+  connection: local
+  become: yes # Use sudo for administrative tasks
+  gather_facts: no # Not strictly needed for this task
+
+  vars:
+    parent_interface: "eno1"
+    vlans_to_create:
+      # Mapping of connection name to VLAN ID
+      - { name: "BLUE1", id: 10 }
+      - { name: "BLUE2", id: 20 }
+      - { name: "BLUE3", id: 30 }
+      - { name: "RED1", id: 40 }
+      - { name: "RED2", id: 50 }
+      - { name: "RED3", id: 60 }
+      - { name: "Admin", id: 100 }
+
+  tasks:
+    - name: Configure and activate VLAN connections using NetworkManager (nmcli)
+      # The nmcli module directly manages NetworkManager connections
+      community.general.nmcli:
+        type: vlan
+        conn_name: "{{ item.name }}"
+        ifname: "{{ parent_interface }}.{{ item.id }}" # e.g., eno1.10
+        dev: "{{ parent_interface }}"
+        id: "{{ item.id }}"
+        autoconnect: yes # Ensures it comes up after a reboot
+        state: present   # Ensures the connection exists and is active
+        # Leave IP settings blank to use automatic configuration/DHCP if available
+      loop: "{{ vlans_to_create }}"
+      register: nmcli_results
+
+    - name: Verify NetworkManager connection status for the new interfaces
+      ansible.builtin.debug:
+        msg: "VLAN {{ item.item.name }} (ID {{ item.item.id }}) is configured and active."
+      loop: "{{ nmcli_results.results }}"
+      # Only show successful creation messages
+      when: item.changed or item.skipped is not defined
+
+    - name: Show all active connections managed by NetworkManager
+      ansible.builtin.command: nmcli connection show --active
+      register: active_connections
+      changed_when: false
+
+    - name: Print active connections list
+      ansible.builtin.debug:
+        var: active_connections.stdout_lines
