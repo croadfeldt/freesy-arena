@@ -18,7 +18,7 @@
       - { name: "RED3", id: 60 }
       - { name: "Admin", id: 100}
     macvlans_to_create:
-      - { name: "cheesy_macvlan", parent: "Admin", ip4: "10.0.100.5", gw4: "10.0.100.1", dns4: "10.0.100.1"}
+      - { name: "cheesy_macvlan", parent: "Admin",mode: 2, ip4: "10.0.100.5", gw4: "10.0.100.1", dns4: "10.0.100.1"}
 
   tasks:
     - name: Configure and activate VLAN connections using NetworkManager (nmcli)
@@ -50,7 +50,9 @@
         type: macvlan
         conn_name: "{{ item.name }}"
         ifname: "{{ item.name }}" 
-        parent: "{{ item.parent }}"
+        macvlan:
+          parent: "{{ item.parent }}"
+          mode: "{{ item.mode }}"
         ip4: "{{ item.ip4 }}"
         gw4: "{{ item.gw4 }}"
         dns4: "{{ item.dns4 }}"
