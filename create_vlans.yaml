@@ -16,7 +16,9 @@
       - { name: "RED1", id: 40 }
       - { name: "RED2", id: 50 }
       - { name: "RED3", id: 60 }
-      - { name: "Admin", id: 100 }
+      - { name: "Admin", id: 100}
+    macvlans_to_create:
+      - { name: "cheesy_macvlan", parent: "Admin", ip4: "10.0.100.5", gw4: "10.0.100.1", dns4: "10.0.100.1"}
 
   tasks:
     - name: Configure and activate VLAN connections using NetworkManager (nmcli)
@@ -38,6 +40,31 @@
     - name: Verify NetworkManager connection status for the new interfaces
       ansible.builtin.debug:
         msg: "VLAN {{ item.item.name }} (ID {{ item.item.id }}) is configured and active."
+      loop: "{{ nmcli_results.results }}"
+      # Only show successful creation messages
+      when: item.changed or item.skipped is not defined
+
+    - name: Configure and activate macvlanb connections using NetworkManager (nmcli)
+      # The nmcli module directly manages NetworkManager connections
+      community.general.nmcli:
+        type: macvlan
+        conn_name: "{{ item.name }}"
+        ifname: "{{ item.name }}" 
+        parent: "{{ item.parent }}"
+        ip4: "{{ item.ip4 }}"
+        gw4: "{{ item.gw4 }}"
+        dns4: "{{ item.dns4 }}"
+        autoconnect: yes # Ensures it comes up after a reboot
+        state: present   # Ensures the connection exists and is active
+        method4: manual
+        method6: disabled
+        # Leave IP settings blank to use automatic configuration/DHCP if available
+      loop: "{{ macvlans_to_create }}"
+      register: nmcli_results
+
+    - name: Verify NetworkManager connection status for the new interfaces
+      ansible.builtin.debug:
+        msg: "MacVlan {{ item.item.name }} (Parent {{ item.item.parent }}) is configured and active."
       loop: "{{ nmcli_results.results }}"
       # Only show successful creation messages
       when: item.changed or item.skipped is not defined
