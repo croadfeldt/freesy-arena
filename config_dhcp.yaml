@@ -58,7 +58,6 @@
             {% endif %}
           {% endfor %}
           {{ final_list }}
-      cacheable: true
       
     # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
     - name: Remove VLAN interfaces that do not have an active team assigned
