@@ -1,7 +1,7 @@
 # Ansible Playbook: Configure custom DHCP file and network interfaces (6 VLANs)
 
 # Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format.
-# Use null, -1, or empty strings for teams that don't need DHCP configured:
+# Use null, -1, or empty strings for teams that don't need DHCP configured in that specific position:
 # ansible-playbook -e '{"team_numbers": [123, 456, null, -1, "", 000]}' config_dhcp.yaml
 #
 - name: Configure custom DHCP file and network interfaces (6 VLANs)
@@ -28,9 +28,8 @@
     # Placeholder variable that will hold the calculated subnets
     subnets_input: [] 
     
-    # Define a value to treat as 'null' or skipped team number
-    # This value will be filtered out. 
-    skip_value: -1
+    # Define values to treat as 'null' or skipped team number
+    skip_values: [ -1, "", none, null ] # List of values to ignore during processing
 
   tasks:
     - name: Ensure dhcpd config directory exists
@@ -41,39 +40,61 @@
         group: dhcpd
         mode: '0755'
 
-    - name: Dynamically generate the list of CIDR subnets details from non-null/non-skip/non-empty team numbers
-      ansible.builtin.set_fact:
-        # Use select('defined'), reject('==', skip_value), and reject('==', '') to filter out invalid inputs
-        filtered_team_numbers: "{{ team_numbers | default([]) | select('defined') | reject('==', skip_value) | reject('==', '') | list }}"
-    
-    - name: Generate the actual subnet details list (only for teams that are defined/not skipped/not empty)
-      ansible.builtin.set_fact:
-        subnets_details: "{{ filtered_team_numbers | map('generate_subnet_details_filter') | list }}"
+    - name: Validate that 'team_numbers' is provided and correct length
+      ansible.builtin.assert:
+        that:
+          - team_numbers is defined
+          - team_numbers | length == 6
+        fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
 
-    - name: Generate the dhcpd-frc.conf file from template (will only contain active teams)
+    # We skip generating subnets for invalid entries but keep the list the same length
+    - name: Dynamically generate the list of CIDR subnets details from team numbers
+      ansible.builtin.set_fact:
+        subnets_details: >-
+          {% set final_list = [] %}
+          {% for team in team_numbers %}
+            {% if team is defined and team != '' and team != -1 %}
+              {% set _ = final_list.append(team | generate_subnet_details_filter) %}
+            {% else %}
+              {% set _ = final_list.append(omit) %}
+            {% endif %}
+          {% endfor %}
+          {{ final_list }}
+
+    # Combine the configurations immediately
+    - name: Combine team data with original vlan config data
+      ansible.builtin.set_fact:
+        combined_config_data: "{{ vlan_configs | zip(subnets_details) | list }}"
+      # The omit value causes zip to skip the item entirely, resulting in a shorter list of *active* configs
+      # This is a safe way to handle the subsequent loops which expect valid subnet details
+
+    - name: Generate the dhcpd-frc.conf file from template (only contains active teams)
       ansible.builtin.template:
         src: templates/dhcpd-frc.conf.j2
         dest: "{{ target_file_path }}"
         owner: root
         group: dhcpd
         mode: '0640'
+      # The template logic itself must also handle which subnets to render
       notify:
         - Restart dhcpd service
-      when: subnets_details | length > 0
+      when: combined_config_data | length > 0
+
+    # ... [SELinux and include tasks remain the same as they depend on the file existing] ...
 
     - name: Check if SELinux is enabled
       ansible.builtin.command: getenforce
       changed_when: false
       failed_when: false
       register: getenforce_result
-      when: subnets_details | length > 0
+      when: combined_config_data | length > 0
 
     - name: Apply standard SELinux file context (if SELinux is enforcing)
       ansible.builtin.command: >
         restorecon -v "{{ target_directory }}"
       when: 
         - getenforce_result.stdout == 'Enforcing'
-        - subnets_details | length > 0
+        - combined_config_data | length > 0
       notify:
         - Restart dhcpd service
 
@@ -83,16 +104,12 @@
         line: 'include "{{ target_file_path }}";'
         state: present
         regexp: '^#?\s*include\s*["'']{{ target_file_path }}["''];?$'
-      when: subnets_details | length > 0
+      when: combined_config_data | length > 0
       notify:
         - Restart dhcpd service
     
-    - name: Combine filtered team data with original vlan config data
-      ansible.builtin.set_fact:
-        combined_config_data: "{{ vlan_configs | zip(subnets_details) | list }}"
-      when: subnets_details | length > 0
-
-    - name: Ensure VLAN interfaces are configured with static IPs and custom names
+    # nmcli tasks iterate ONLY over the valid (non-omitted/zipped) configurations
+    - name: Ensure VLAN interfaces are configured with static IPs and custom names for valid teams
       community.general.nmcli:
         conn_name: "{{ item.0.name }}"
         ifname: "{{ item.0.name }}"
@@ -103,19 +120,19 @@
         ip4: "{{ item.1.base_ip_prefix }}.{{ ip_last_octet }}/{{ item.1.cidr_prefix }}"
         method4: manual
         autoconnect: yes
-      loop: "{{ combined_config_data | default([]) }}"
+      loop: "{{ combined_config_data }}"
       register: nmcli_status
-      when: combined_config_data | default([]) | length > 0
+      when: combined_config_data | length > 0
 
 
     - name: Activate VLAN interfaces if configured or modified
       community.general.nmcli:
         conn_name: "{{ item.0.name }}"
         state: up
-      loop: "{{ combined_config_data | default([]) }}"
+      loop: "{{ combined_config_data }}"
       when: 
         - nmcli_status is changed
-        - combined_config_data | default([]) | length > 0
+        - combined_config_data | length > 0
 
   handlers:
     - name: Restart dhcpd service
