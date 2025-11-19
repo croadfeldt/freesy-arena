@@ -2,7 +2,7 @@
 
 # Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format,
 # providing a list of team numbers:
-# ansible-playbook -e '{"team_numbers": [101, 55, 1234, 12345, 999, 10] }' config_dhcp.yaml
+# ansible-playbook -e '{"team_numbers": }' config_dhcp.yaml
 #
 - name: Configure custom DHCP file and network interfaces (6 VLANs)
   hosts: localhost
@@ -35,6 +35,14 @@
         owner: cheesy
         group: cheesy
         mode: '0755'
+    
+    - name: Ensure dhcpd can read configuration directory
+      ansible.builtin.file:
+        path: "/home/cheesy"
+        mode: "u=rwX,g=rX,o=rX"
+        state: directory
+        owner: "cheesy"
+        group: "cheesy"
 
     - name: Validate that 'team_numbers' is provided and correct length
       ansible.builtin.assert:
@@ -66,7 +74,7 @@
         dest: "{{ target_file_path }}"
         owner: cheesy
         group: cheesy
-        mode: '0644'
+        mode: '0644' # File permissions for daemon to read
       notify:
         - Confirm file generation
         - Restart dhcpd service
@@ -102,6 +110,11 @@
       loop: "{{ vlan_configs | zip(subnets_details) | list }}"
       # Only run this task if the previous nmcli task changed something
       when: nmcli_status.changed
+
+    - name: Ensure the old Admin VLAN connection is absent
+      community.general.nmcli:
+        conn_name: "Admin"
+        state: absent
 
   handlers:
     - name: Confirm file generation
