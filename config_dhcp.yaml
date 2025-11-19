@@ -32,7 +32,7 @@
       ansible.builtin.file:
         path: "/home/cheesy"
         state: directory
-        mode: '0755' # Use the same octal mode for consistency
+        mode: '0755'
         owner: cheesy
         group: cheesy
 
@@ -42,7 +42,7 @@
         state: directory
         owner: cheesy
         group: cheesy
-        mode: '0755' # Consistent mode for all directories in path
+        mode: '0755'
 
     - name: Validate that 'team_numbers' is provided and correct length
       ansible.builtin.assert:
@@ -53,7 +53,6 @@
 
     - name: Dynamically generate the list of CIDR subnets details from team numbers
       ansible.builtin.set_fact:
-        # We use the custom Python filter 'generate_subnet_details_filter' here
         subnets_details: "{{ team_numbers | map('generate_subnet_details_filter') | list }}"
 
     - name: Debug - Show the generated subnets details
@@ -74,7 +73,7 @@
         dest: "{{ target_file_path }}"
         owner: cheesy
         group: cheesy
-        mode: '0644' # File permissions for daemon to read
+        mode: '0644'
       notify:
         - Confirm file generation
         - Restart dhcpd service
@@ -88,6 +87,30 @@
       notify:
         - Restart dhcpd service
 
+    - name: Check if SELinux is in enforcing mode
+      ansible.builtin.command: getenforce
+      changed_when: false
+      failed_when: false
+      register: getenforce_result
+    
+    - name: Add SELinux file context for dhcpd config
+      ansible.builtin.command: >
+        semanage fcontext -a -t dhcpd_conf_t "{{ target_file_path }}"
+      when: >
+        getenforce_result.rc == 0 and
+        getenforce_result.stdout == 'Enforcing' and
+        (ansible_facts['os_family'] | lower == 'redhat')
+    
+    - name: Apply SELinux file context
+      ansible.builtin.command: >
+        restorecon -v "{{ target_file_path }}"
+      when: >
+        getenforce_result.rc == 0 and
+        getenforce_result.stdout == 'Enforcing' and
+        (ansible_facts['os_family'] | lower == 'redhat')
+      notify:
+        - Restart dhcpd service
+
     - name: Ensure VLAN interfaces are configured with static IPs and custom names
       community.general.nmcli:
         conn_name: "{{ item.0.name }}"
@@ -96,7 +119,6 @@
         vlandev: "{{ parent_interface }}"
         vlanid: "{{ item.0.id }}"
         state: present
-        # Use the pre-calculated base_ip_prefix and append the static last octet
         ip4: "{{ item.1.base_ip_prefix }}.{{ ip_last_octet }}/{{ item.1.cidr_prefix }}"
         method4: manual
         autoconnect: yes
@@ -108,7 +130,6 @@
         conn_name: "{{ item.0.name }}"
         state: up
       loop: "{{ vlan_configs | zip(subnets_details) | list }}"
-      # Only run this task if the previous nmcli task changed something
       when: nmcli_status.changed
 
   handlers:
