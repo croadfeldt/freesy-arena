@@ -107,8 +107,8 @@
           mode: "{{ item.mode }}"
         ip4: "{{ item.ip4 | default([]) }}"
         ip6: "{{ item.ip6 | default([]) }}"
-        gw4: "{{ item.gw4 | default([]) }}"
-        gw6: "{{ item.gw6 | default([]) }}"
+        gw4: "{{ item.gw4 | default() }}"
+        gw6: "{{ item.gw6 | default() }}"
         dns4: "{{ item.dns4 | default([]) }}"
         dns6: "{{ item.dns6 | default([]) }}"
         autoconnect: yes
