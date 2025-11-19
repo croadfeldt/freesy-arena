@@ -3,8 +3,7 @@
 authoritative;
 
 # DHCP options for each subnet
-{% for vlan, subnet in vlan_configs | zip(subnets_details) %}
-{% if vlan.name != "SkipThisTeam" %}
+{% for vlan, subnet in combined_config_data %}
 # Subnet configuration for VLAN {{ vlan.id }} ({{ vlan.name }})
 subnet {{ subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask {{ subnet.netmask }} {
     option routers {{ subnet.gateway }};
@@ -12,5 +11,4 @@ subnet {{ subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask {{ sub
     option broadcast-address {{ subnet.broadcast_ip }};
     range {{ subnet.first_assignable_ip }} {{ subnet.last_assignable_ip }};
 }
-{% endif %}
 {% endfor %}
