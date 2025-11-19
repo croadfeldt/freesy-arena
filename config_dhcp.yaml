@@ -1,5 +1,5 @@
 ---
-# Example Usage:
+# Example Usage: To run this playbook correctly, ensure you pass a YAML list of subnets:
 # ansible-playbook -e 'subnets_input=["192.168.10.0/24", "192.168.20.0/24", "192.168.30.0/24", "192.168.40.0/24", "192.168.50.0/24", "192.168.60.0/24"]' config_dhcp.yaml
 #
 - name: Configure custom DHCP file and network interfaces (6 VLANs)
@@ -10,11 +10,9 @@
     target_file_path: "/home/cheesy/freesy-arena/dhcpd-frc.conf"
     target_directory: "/home/cheesy/freesy-arena"
     
-    # 'subnets_input' list is expected via the -e flag in the command line example above
-    
     # --- VLAN Configuration Variables ---
-    parent_interface: "eno1"         # Updated to use the correct parent device name
-    ip_last_octet: "4"               # The last octet of the static IP for all VLANs
+    parent_interface: "eno1"         # Parent physical device name
+    ip_last_octet: "4"               # The last octet of the static IP/router IP for all VLANs
     # Define the VLAN IDs and corresponding names
     vlan_configs:
       - { id: 10, name: "BLUE1" }
@@ -34,14 +32,23 @@
         group: cheesy
         mode: '0755'
 
+    - name: Validate that 'subnets_input' is provided as a list
+      ansible.builtin.assert:
+        that:
+          - subnets_input is defined
+          - subnets_input is not string # Ensures it's treated as a list, not a single quoted string
+          - subnets_input | length == 6
+        fail_msg: "subnets_input must be defined as a list of exactly 6 subnets via the -e flag. Example command is in the playbook comments."
+        # This assert runs before the loops that depend on it
+
     - name: Prepare subnet details dictionary (for DHCP file generation)
       ansible.builtin.set_fact:
         subnets_details: >-
           {{ subnets_details | default([]) + 
              [{ 'network': item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address'),
-                'router': item | community.general.ipaddr('1') | community.general.ipaddr('address'),
-                'range_start': item | community.general.ipaddr('20') | community.general.ipaddr('address'),
-                'range_end': item | community.general.ipaddr('-57') | community.general.ipaddr('address')
+                'router': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.' + ip_last_octet,
+                'range_start': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.20',
+                'range_end': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.199'
              }] }}
       loop: "{{ subnets_input }}"
 
@@ -54,7 +61,8 @@
         mode: '0644'
       notify:
         - Confirm file generation
-    
+        - Restart dhcpd service # Can add handler call here as well for visibility
+
     - name: Ensure the custom config file is included in /etc/dhcp/dhcpd.conf
       ansible.builtin.lineinfile:
         path: /etc/dhcp/dhcpd.conf
@@ -75,14 +83,14 @@
         ip4: "{{ item.1.network | split('.') | slice(0, 3) | join('.') }}.{{ ip_last_octet }}/{{ cidr_prefix | default(24) }}"
         method4: manual
         autoconnect: yes
+      # Zips the vlan names/ids list with the subnet details list
       loop: "{{ vlan_configs | zip(subnets_details) | list }}"
-      when: subnets_input is defined and subnets_input | length == 6
+      # The assert task above handles the length validation, making 'when' less critical here
 
     - name: Ensure the old Admin VLAN connection is absent
       community.general.nmcli:
         conn_name: "Admin"
         state: absent
-      when: subnets_input is defined and subnets_input | length == 6
 
   handlers:
     - name: Confirm file generation
