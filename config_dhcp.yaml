@@ -28,21 +28,21 @@
     subnets_input: [] 
 
   tasks:
-    - name: Ensure the target directory exists
+    - name: Ensure parent directory for target directory exists and is accessible
+      ansible.builtin.file:
+        path: "/home/cheesy"
+        state: directory
+        mode: '0755' # Use the same octal mode for consistency
+        owner: cheesy
+        group: cheesy
+
+    - name: Ensure the target directory exists and is accessible
       ansible.builtin.file:
         path: "{{ target_directory }}"
         state: directory
         owner: cheesy
         group: cheesy
-        mode: '0755'
-    
-    - name: Ensure dhcpd can read configuration directory
-      ansible.builtin.file:
-        path: "/home/cheesy"
-        mode: "u=rwX,g=rX,o=rX"
-        state: directory
-        owner: "cheesy"
-        group: "cheesy"
+        mode: '0755' # Consistent mode for all directories in path
 
     - name: Validate that 'team_numbers' is provided and correct length
       ansible.builtin.assert:
