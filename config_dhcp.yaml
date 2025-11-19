@@ -1,4 +1,3 @@
----
 # Ansible Playbook: Configure custom DHCP file and network interfaces (6 VLANs)
 
 # Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format,
@@ -44,49 +43,24 @@
           - team_numbers | length == 6
         fail_msg: "team_numbers must be defined as a list of exactly 6 numbers. Use the JSON command line format shown in the playbook comments."
 
-    # --- Convert team numbers to subnets using custom filter ---
-    - name: Dynamically generate the list of CIDR subnets from team numbers
+    - name: Dynamically generate the list of CIDR subnets details from team numbers
       ansible.builtin.set_fact:
-        # We use the custom Python filter 'generate_subnet_filter' here
-        subnets_input: "{{ team_numbers | map('generate_subnet_filter') | list }}"
-
-    - name: Dynamically generate the list of CIDR subnets from team numbers
-      ansible.builtin.set_fact:
-        # We use the custom Python filter 'generate_subnet_filter' here
-        subnets_input: "{{ team_numbers | map('generate_subnet_filter') | list }}"
+        # We use the custom Python filter 'generate_subnet_details_filter' here
+        subnets_details: "{{ team_numbers | map('generate_subnet_details_filter') | list }}"
 
     # --- Add these debug steps ---
-    - name: Debug - Show the generated subnets
+    - name: Debug - Show the generated subnets details
       ansible.builtin.debug:
-        var: subnets_input
+        var: subnets_details
     
-    - name: Debug - Check if the first item in subnets_input is a valid IP address format
-      ansible.builtin.assert:
-        that:
-          - subnets_input[0] is defined
-          - subnets_input[0] | ansible.utils.ipaddr
-        fail_msg: "The generated subnet {{ subnets_input[0] }} is not a valid IP address format, which is causing the 'NoneType' error later."
-
     - name: Debug - Inspect intermediate IP address output and type
       ansible.builtin.debug:
         msg: >-
-          Input 'item': {{ item }} | 
-          IPAddr Output: {{ item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') }} |
-          Jinja Type: {{ (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address')).__class__.__name__ }}
-      loop: "{{ subnets_input }}"
+          Input 'item': {{ item.subnet_cidr }} | 
+          IPAddr Output: {{ item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') }} |
+          Jinja Type: {{ (item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address')).__class__.__name__ }}
+      loop: "{{ subnets_details }}"
     # --- End Debug steps ---
-
-
-    - name: Prepare subnet details dictionary (for DHCP file generation)
-      ansible.builtin.set_fact:
-        subnets_details: >-
-          {{ subnets_details | default([]) + 
-             [{ 'network': item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address'),
-                'router': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.' + ip_last_octet,
-                'range_start': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.20',
-                'range_end': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.199'
-             }] }}
-      loop: "{{ subnets_input }}"
 
     - name: Generate the dhcpd-frc.conf file from template
       ansible.builtin.template:
@@ -116,7 +90,8 @@
         dev: "{{ parent_interface }}"
         id: "{{ item.0.id }}"
         state: present
-        ip4: "{{ item.1.network | split('.') | slice(0, 3) | join('.') }}.{{ ip_last_octet }}/{{ cidr_prefix | default(24) }}"
+        # Use the pre-calculated base_ip_prefix and append the static last octet
+        ip4: "{{ item.1.base_ip_prefix }}.{{ ip_last_octet }}/{{ item.1.cidr_prefix }}"
         method4: manual
         autoconnect: yes
       loop: "{{ vlan_configs | zip(subnets_details) | list }}"
