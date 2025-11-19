@@ -9,8 +9,9 @@
   connection: local
   become: true
   vars:
-    target_file_path: "/home/cheesy/freesy-arena/dhcpd-frc.conf"
-    target_directory: "/home/cheesy/freesy-arena"
+    # --- Change target file path to a standard location ---
+    target_directory: "/etc/dhcp/dhcpd.conf.d"
+    target_file_path: "/etc/dhcp/dhcpd.conf.d/frc-config.conf"
     
     # --- VLAN Configuration Variables ---
     parent_interface: "eno1"         # Parent physical device name
@@ -28,20 +29,12 @@
     subnets_input: [] 
 
   tasks:
-    - name: Ensure parent directory for target directory exists and is accessible
-      ansible.builtin.file:
-        path: "/home/cheesy"
-        state: directory
-        mode: '0755'
-        owner: cheesy
-        group: cheesy
-
-    - name: Ensure the target directory exists and is accessible
+    - name: Ensure dhcpd config directory exists
       ansible.builtin.file:
         path: "{{ target_directory }}"
         state: directory
-        owner: cheesy
-        group: cheesy
+        owner: root
+        group: dhcpd
         mode: '0755'
 
     - name: Validate that 'team_numbers' is provided and correct length
@@ -55,27 +48,27 @@
       ansible.builtin.set_fact:
         subnets_details: "{{ team_numbers | map('generate_subnet_details_filter') | list }}"
 
-    - name: Debug - Show the generated subnets details
-      ansible.builtin.debug:
-        var: subnets_details
-    
-    - name: Debug - Inspect intermediate IP address output and type
-      ansible.builtin.debug:
-        msg: >-
-          Input 'item': {{ item.subnet_cidr }} | 
-          IPAddr Output: {{ item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') }} |
-          Jinja Type: {{ (item.subnet_cidr | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address')).__class__.__name__ }}
-      loop: "{{ subnets_details }}"
-    
     - name: Generate the dhcpd-frc.conf file from template
       ansible.builtin.template:
         src: templates/dhcpd-frc.conf.j2
         dest: "{{ target_file_path }}"
-        owner: cheesy
-        group: cheesy
-        mode: '0644'
+        owner: root
+        group: dhcpd
+        mode: '0640'
       notify:
-        - Confirm file generation
+        - Restart dhcpd service
+
+    - name: Check if SELinux is enabled
+      ansible.builtin.command: getenforce
+      changed_when: false
+      failed_when: false
+      register: getenforce_result
+
+    - name: Apply standard SELinux file context (if SELinux is enforcing)
+      ansible.builtin.command: >
+        restorecon -v "{{ target_directory }}"
+      when: getenforce_result.stdout == 'Enforcing'
+      notify:
         - Restart dhcpd service
 
     - name: Ensure the custom config file is included in /etc/dhcp/dhcpd.conf
@@ -84,30 +77,6 @@
         line: 'include "{{ target_file_path }}";'
         state: present
         regexp: '^#?\s*include\s*["'']{{ target_file_path }}["''];?$'
-      notify:
-        - Restart dhcpd service
-
-    - name: Check if SELinux is in enforcing mode
-      ansible.builtin.command: getenforce
-      changed_when: false
-      failed_when: false
-      register: getenforce_result
-    
-    - name: Add SELinux file context for dhcpd config
-      ansible.builtin.command: >
-        semanage fcontext -a -t dhcpd_conf_t "{{ target_file_path }}"
-      when: >
-        getenforce_result.rc == 0 and
-        getenforce_result.stdout == 'Enforcing' and
-        (ansible_facts['os_family'] | lower == 'redhat')
-    
-    - name: Apply SELinux file context
-      ansible.builtin.command: >
-        restorecon -v "{{ target_file_path }}"
-      when: >
-        getenforce_result.rc == 0 and
-        getenforce_result.stdout == 'Enforcing' and
-        (ansible_facts['os_family'] | lower == 'redhat')
       notify:
         - Restart dhcpd service
 
@@ -133,10 +102,6 @@
       when: nmcli_status.changed
 
   handlers:
-    - name: Confirm file generation
-      ansible.builtin.debug:
-        msg: "The custom DHCP configuration file at {{ target_file_path }} has been successfully generated/updated."
-
     - name: Restart dhcpd service
       ansible.builtin.service:
         name: dhcpd
