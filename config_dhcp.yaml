@@ -66,7 +66,16 @@
           - subnets_input[0] is defined
           - subnets_input[0] | ansible.utils.ipaddr
         fail_msg: "The generated subnet {{ subnets_input[0] }} is not a valid IP address format, which is causing the 'NoneType' error later."
+
+    - name: Debug - Inspect intermediate IP address output and type
+      ansible.builtin.debug:
+        msg: >-
+          Input 'item': {{ item }} | 
+          IPAddr Output: {{ item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') }} |
+          Jinja Type: {{ (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address')).__class__.__name__ }}
+      loop: "{{ subnets_input }}"
     # --- End Debug steps ---
+
 
     - name: Prepare subnet details dictionary (for DHCP file generation)
       ansible.builtin.set_fact:
