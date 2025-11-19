@@ -65,12 +65,12 @@
       community.general.nmcli:
         type: vlan
         conn_name: "{{ item.name }}"
-        ifname: "{{ item.name }}" 
+        ifname: "{{ item.name }}"
         vlandev: "{{ parent_interface }}"
         vlanid: "{{ item.id }}"
         autoconnect: yes
         state: present
-        ip4: []
+        ip4: [] # Explicitly remove any IPv4 addresses
         ip6: []
         method4: disabled
         method6: disabled
@@ -94,7 +94,7 @@
       community.general.nmcli:
         type: macvlan
         conn_name: "{{ item.name }}"
-        ifname: "{{ item.name }}" 
+        ifname: "{{ item.name }}"
         macvlan:
           parent: "{{ item.parent }}"
           mode: "{{ item.mode }}"
