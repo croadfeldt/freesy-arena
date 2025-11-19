@@ -46,13 +46,13 @@
         state: absent
         regexp: '^include ["'']{{ target_file_path }}["''];?$'
       register: lineinfile_results
-      ignore_errors: yes # Ignore if file doesn't exist or line isn't there
+      ignore_errors: yes
 
     - name: Remove the custom SELinux fcontext for dhcpd config file path
       ansible.builtin.command: >
         semanage fcontext -d "{{ target_file_path }}"
       when: ansible_facts['os_family'] | lower == 'redhat'
-      ignore_errors: yes # The command will fail if the context doesn't exist
+      ignore_errors: yes
       register: semanage_results
 
     - name: Restore default SELinux context on cleaned path
@@ -77,6 +77,13 @@
       loop: "{{ vlans_to_create }}"
       register: nmcli_vlan_results
 
+    - name: Activate VLAN connections if modified
+      community.general.nmcli:
+        conn_name: "{{ item.name }}"
+        state: up
+      loop: "{{ vlans_to_create }}"
+      when: nmcli_vlan_results.changed
+
     - name: Verify NetworkManager connection status for the new interfaces
       ansible.builtin.debug:
         msg: "VLAN {{ item.item.name }} (ID {{ item.item.id }}) is configured and active."
@@ -100,6 +107,13 @@
         method6: disabled
       loop: "{{ macvlans_to_create }}"
       register: nmcli_macvlan_results
+
+    - name: Activate macvlan connections if modified
+      community.general.nmcli:
+        conn_name: "{{ item.name }}"
+        state: up
+      loop: "{{ macvlans_to_create }}"
+      when: nmcli_macvlan_results.changed
 
     - name: Verify NetworkManager connection status for the new interfaces
       ansible.builtin.debug:
