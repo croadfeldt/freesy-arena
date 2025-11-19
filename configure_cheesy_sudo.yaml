@@ -1,15 +1,11 @@
 ---
-- name: Create specified sudoers file for the cheesy user
+- name: Configure sudoers rule for user cheesy
   # Targets the local machine itself
   hosts: localhost
   connection: local
   become: yes # Use sudo for administrative tasks
   gather_facts: no # Not strictly needed for this task
-
-- name: Configure sudoers rule for user cheesy
-  hosts: your_target_hosts
-  become: true  # This allows the playbook to run with sudo privileges
-
+  
   vars:
     sudoers_file_path: "/etc/sudoers.d/cheesy_ansible_pb"
     sudoers_rule: "cheesy ALL=(ALL) NOPASSWD: /usr/bin/ansible-playbook"
