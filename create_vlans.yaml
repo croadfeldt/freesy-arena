@@ -25,8 +25,8 @@
         type: vlan
         conn_name: "{{ item.name }}"
         ifname: "{{ parent_interface }}.{{ item.id }}" # e.g., eno1.10
-        dev: "{{ parent_interface }}"
-        id: "{{ item.id }}"
+        vlandev: "{{ parent_interface }}"
+        vlanid: "{{ item.id }}"
         autoconnect: yes # Ensures it comes up after a reboot
         state: present   # Ensures the connection exists and is active
         # Leave IP settings blank to use automatic configuration/DHCP if available
