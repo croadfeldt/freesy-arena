@@ -43,10 +43,10 @@
       ansible.builtin.set_fact:
         subnets_details: >-
           {{ subnets_details | default([]) + 
-             [{ 'network': item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address'),
-                'router': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.' + ip_last_octet,
-                'range_start': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.20',
-                'range_end': (item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.199'
+             [{ 'network': item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address'),
+                'router': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.' + ip_last_octet,
+                'range_start': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.20',
+                'range_end': (item | ansible.utils.ipaddr('network/prefix') | ansible.utils.ipaddr('address') | split('.') | slice(0, 3) | join('.')) + '.199'
              }] }}
       loop: "{{ subnets_input }}"
 
