@@ -4,8 +4,8 @@ authoritative;
 
 # DHCP options for each subnet
 {% for vlan, subnet in combined_config_data %}
-{# Safety check for undefined values #}
-{% if subnet is not ansibleundefined and subnet is not omitted %}
+{# Explicitly check for valid data within the loop. The "omit" or "ansibleundefined" values must be caught here. #}
+{% if subnet is defined and subnet is not omitted and subnet != '' %}
 # Subnet configuration for VLAN {{ vlan.id }} ({{ vlan.name }})
 subnet {{ subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask {{ subnet.netmask }} {
     option routers {{ subnet.gateway }};
