@@ -44,11 +44,29 @@
           - team_numbers | length == 6
         fail_msg: "team_numbers must be defined as a list of exactly 6 numbers. Use the JSON command line format shown in the playbook comments."
 
-    # --- NEW TASK: Convert team numbers to subnets using custom filter ---
+    # --- Convert team numbers to subnets using custom filter ---
     - name: Dynamically generate the list of CIDR subnets from team numbers
       ansible.builtin.set_fact:
         # We use the custom Python filter 'generate_subnet_filter' here
         subnets_input: "{{ team_numbers | map('generate_subnet_filter') | list }}"
+
+    - name: Dynamically generate the list of CIDR subnets from team numbers
+      ansible.builtin.set_fact:
+        # We use the custom Python filter 'generate_subnet_filter' here
+        subnets_input: "{{ team_numbers | map('generate_subnet_filter') | list }}"
+
+    # --- Add these debug steps ---
+    - name: Debug - Show the generated subnets
+      ansible.builtin.debug:
+        var: subnets_input
+    
+    - name: Debug - Check if the first item in subnets_input is a valid IP address format
+      ansible.builtin.assert:
+        that:
+          - subnets_input[0] is defined
+          - subnets_input[0] | ansible.utils.ipaddr
+        fail_msg: "The generated subnet {{ subnets_input[0] }} is not a valid IP address format, which is causing the 'NoneType' error later."
+    # --- End Debug steps ---
 
     - name: Prepare subnet details dictionary (for DHCP file generation)
       ansible.builtin.set_fact:
