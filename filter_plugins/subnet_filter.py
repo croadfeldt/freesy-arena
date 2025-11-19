@@ -7,7 +7,7 @@ import ipaddress
 
 def generate_subnet_details_filter(team_number_input):
     """
-    Generates a dictionary of subnet details (network, router base, ranges) 
+    Generates a dictionary of subnet details (network, router base, ranges, CIDR) 
     based on team number rules, using robust Python IP libraries.
     """
     try:
@@ -34,13 +34,20 @@ def generate_subnet_details_filter(team_number_input):
         network_obj = ipaddress.IPv4Network(network_cidr)
         network_address = str(network_obj.network_address)
         
+        # Calculate broadcast, first assignable, and last assignable IPs
+        broadcast_ip = str(network_obj.broadcast_address)
+        first_assignable_ip = str(network_obj.network_address + 20) # Start range at .20
+        last_assignable_ip = str(network_obj.network_address + 199) # End range at .199
+
         # Return a dictionary with all required values
         return {
             'network': network_address,
-            # Placeholder for last octet in router IP, we add it in the playbook
+            'subnet_cidr': network_cidr, # **This is the added data point**
             'base_ip_prefix': f"10.{second_octet}.{third_octet}",
-            'range_start': f"10.{second_octet}.{third_octet}.20",
-            'range_end': f"10.{second_octet}.{third_octet}.199"
+            'cidr_prefix': 24,
+            'broadcast_ip': broadcast_ip,
+            'first_assignable_ip': first_assignable_ip,
+            'last_assignable_ip': last_assignable_ip,
         }
 
     except (ValueError, TypeError, ipaddress.AddressValueError) as e:
@@ -50,6 +57,6 @@ def generate_subnet_details_filter(team_number_input):
 class FilterModule(object):
     def filters(self):
         return {
-            # Rename the filter to reflect its new functionality
             'generate_subnet_details_filter': generate_subnet_details_filter
         }
+
