@@ -87,8 +87,8 @@
         conn_name: "{{ item.0.name }}"
         ifname: "{{ item.0.name }}"
         type: vlan
-        dev: "{{ parent_interface }}"
-        id: "{{ item.0.id }}"
+        vlandev: "{{ parent_interface }}"
+        vlanid: "{{ item.0.id }}"
         state: present
         # Use the pre-calculated base_ip_prefix and append the static last octet
         ip4: "{{ item.1.base_ip_prefix }}.{{ ip_last_octet }}/{{ item.1.cidr_prefix }}"
