@@ -1,0 +1,95 @@
+---
+# Example Usage:
+# ansible-playbook -e 'subnets_input=["192.168.10.0/24", "192.168.20.0/24", "192.168.30.0/24", "192.168.40.0/24", "192.168.50.0/24", "192.168.60.0/24"]' config_dhcp.yaml
+#
+- name: Configure custom DHCP file and network interfaces (6 VLANs)
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    target_file_path: "/home/cheesy/freesy-arena/dhcpd-frc.conf"
+    target_directory: "/home/cheesy/freesy-arena"
+    
+    # 'subnets_input' list is expected via the -e flag in the command line example above
+    
+    # --- VLAN Configuration Variables ---
+    parent_interface: "eno1"         # Updated to use the correct parent device name
+    ip_last_octet: "4"               # The last octet of the static IP for all VLANs
+    # Define the VLAN IDs and corresponding names
+    vlan_configs:
+      - { id: 10, name: "BLUE1" }
+      - { id: 20, name: "BLUE2" }
+      - { id: 30, name: "BLUE3" }
+      - { id: 40, name: "RED1" }
+      - { id: 50, name: "RED2" }
+      - { id: 60, name: "RED3" }
+    # ------------------------------------
+
+  tasks:
+    - name: Ensure the target directory exists
+      ansible.builtin.file:
+        path: "{{ target_directory }}"
+        state: directory
+        owner: cheesy
+        group: cheesy
+        mode: '0755'
+
+    - name: Prepare subnet details dictionary (for DHCP file generation)
+      ansible.builtin.set_fact:
+        subnets_details: >-
+          {{ subnets_details | default([]) + 
+             [{ 'network': item | community.general.ipaddr('network/prefix') | community.general.ipaddr('address'),
+                'router': item | community.general.ipaddr('1') | community.general.ipaddr('address'),
+                'range_start': item | community.general.ipaddr('20') | community.general.ipaddr('address'),
+                'range_end': item | community.general.ipaddr('-57') | community.general.ipaddr('address')
+             }] }}
+      loop: "{{ subnets_input }}"
+
+    - name: Generate the dhcpd-frc.conf file from template
+      ansible.builtin.template:
+        src: templates/dhcpd-frc.conf.j2
+        dest: "{{ target_file_path }}"
+        owner: cheesy
+        group: cheesy
+        mode: '0644'
+      notify:
+        - Confirm file generation
+    
+    - name: Ensure the custom config file is included in /etc/dhcp/dhcpd.conf
+      ansible.builtin.lineinfile:
+        path: /etc/dhcp/dhcpd.conf
+        line: 'include "{{ target_file_path }}";'
+        state: present
+        regexp: '^#?\s*include\s*["'']{{ target_file_path }}["''];?$'
+      notify:
+        - Restart dhcpd service
+
+    - name: Ensure VLAN interfaces are configured with static IPs and custom names
+      community.general.nmcli:
+        conn_name: "{{ item.0.name }}"
+        ifname: "{{ item.0.name }}"
+        type: vlan
+        dev: "{{ parent_interface }}"
+        id: "{{ item.0.id }}"
+        state: present
+        ip4: "{{ item.1.network | split('.') | slice(0, 3) | join('.') }}.{{ ip_last_octet }}/{{ cidr_prefix | default(24) }}"
+        method4: manual
+        autoconnect: yes
+      loop: "{{ vlan_configs | zip(subnets_details) | list }}"
+      when: subnets_input is defined and subnets_input | length == 6
+
+    - name: Ensure the old Admin VLAN connection is absent
+      community.general.nmcli:
+        conn_name: "Admin"
+        state: absent
+      when: subnets_input is defined and subnets_input | length == 6
+
+  handlers:
+    - name: Confirm file generation
+      ansible.builtin.debug:
+        msg: "The custom DHCP configuration file at {{ target_file_path }} has been successfully generated/updated."
+
+    - name: Restart dhcpd service
+      ansible.builtin.service:
+        name: dhcpd
+        state: restarted
