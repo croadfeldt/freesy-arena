@@ -29,8 +29,8 @@
         vlanid: "{{ item.id }}"
         autoconnect: yes # Ensures it comes up after a reboot
         state: present   # Ensures the connection exists and is active
-        ip4.method: disabled
-        ip6.method: disabled
+        method4: disabled
+        method6: disabled
         # Leave IP settings blank to use automatic configuration/DHCP if available
       loop: "{{ vlans_to_create }}"
       register: nmcli_results
