@@ -6,13 +6,14 @@
 package network
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/Team254/cheesy-arena/model"
-	"sync"
-	"time"
-	"encoding/json"
+	"io"
 	"log"
 	"os/exec"
+	"sync"
+	"time"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 	UnifiSwitchConfigBackoffDurationSec = 5
 	UnifiSwitchConfigPauseDurationSec   = 2
 	UnifiSwitchTeamGatewayAddress       = 4
-	UnifiSwitchAPIPort					= 9999
+	UnifiSwitchAPIPort                  = 9999
 )
 
 // Don't need these for now, ansible has these defined in it already.
@@ -55,21 +56,58 @@ func NewUnifiSwitch(address, password string) *UnifiSwitch {
 }
 
 // Sets up wired networks for the given set of teams.
-// Helper function to run commands safely using os/exec
+// Helper function to run commands safely using os/exec and capture output on failure.
 func (sw *UnifiSwitch) runExecCommand(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	
-	// Optional: Attach stdout/stderr for debugging/logging
-	// cmd.Stdout = os.Stdout
-	// cmd.Stderr = os.Stderr
+
+	// Create pipes for stdout and stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
 
 	fmt.Printf("Executing command: %s\n", cmd.Args) // Log the command
 
-	if err := cmd.Run(); err != nil {
-		// Log the error detail before returning it
-		log.Printf("Command failed: %s %v\n", name, err)
-		return fmt.Errorf("command execution failed: %w", err)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("command failed to start: %w", err)
 	}
+
+	// Read output in separate goroutines to prevent deadlocks
+	stdoutBytes, errStdout := io.ReadAll(stdout)
+	stderrBytes, errStderr := io.ReadAll(stderr)
+
+	if err := cmd.Wait(); err != nil {
+		// Log the error detail and the captured output
+		log.Printf("Command failed: %s\nError: %v\n", name, err)
+
+		// Check if reading output pipes had errors, log them as well
+		if errStdout != nil {
+			log.Printf("Error reading stdout: %v\n", errStdout)
+		} else if len(stdoutBytes) > 0 {
+			log.Printf("Captured STDOUT:\n%s\n", string(stdoutBytes))
+		}
+		if errStderr != nil {
+			log.Printf("Error reading stderr: %v\n", errStderr)
+		} else if len(stderrBytes) > 0 {
+			log.Printf("Captured STDERR:\n%s\n", string(stderrBytes))
+		}
+
+		// Return a comprehensive error message including standard output/error streams
+		return fmt.Errorf("command execution failed: %w. STDOUT: %s. STDERR: %s", err, string(stdoutBytes), string(stderrBytes))
+	}
+
+	// Optionally log successful output if needed (commented out by default)
+	// if len(stdoutBytes) > 0 {
+	//     log.Printf("Command STDOUT:\n%s\n", string(stdoutBytes))
+	// }
+	// if len(stderrBytes) > 0 {
+	//     log.Printf("Command STDERR:\n%s\n", string(stderrBytes))
+	// }
+
 	return nil
 }
 
@@ -80,7 +118,6 @@ func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 	sw.Status = "CONFIGURING"
 
 	// --- Step 1: Remove old team VLANs (cleaner command execution) ---
-	// No need for a separate string variable for a simple command
 	err := sw.runExecCommand("ansible-playbook", "create_vlans.yaml")
 	if err != nil {
 		sw.Status = "ERROR"
@@ -101,7 +138,7 @@ func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 			ids = append(ids, team.Id)
 		}
 	}
-	
+
 	if len(ids) == 0 {
 		log.Println("No team IDs provided; skipping 'config_dhcp.yaml' playbook.")
 		sw.Status = "ACTIVE"
@@ -109,7 +146,7 @@ func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 	}
 
 	vars := AnsibleVars{TeamNumbers: ids}
-	
+
 	// Safely marshal the Go struct into a JSON byte slice
 	jsonData, err := json.Marshal(vars)
 	if err != nil {
