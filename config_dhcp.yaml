@@ -42,7 +42,7 @@
           - team_numbers | length == 6
         fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
 
-    # NEW LOGIC: Generate a clean list of active configurations only
+    # Updated 'Combine and filter configurations' task
     - name: Combine and filter configurations into a single, clean list
       ansible.builtin.set_fact:
         active_configs: >-
@@ -53,14 +53,18 @@
             {# Check if the team number is valid before processing #}
             {% if team is not none and team != '' and team != -1 and team != 0 %}
               {% set subnet_details = team | generate_subnet_details_filter %}
-              {# FIX: Check if the filter returned a valid dictionary (not None) #}
-              {% if subnet_details is not none %}
+              {# FIX: Ensure subnet_details is a dictionary before appending #}
+              {% if subnet_details is mapping %}
                 {% set combined = vlan | combine({'subnet': subnet_details}) %}
                 {% set _ = final_list.append(combined) %}
+              {% else %}
+                {# Optional: Add a debug message here if you want to know what was skipped #}
+                {# {{ ansible.builtin.debug(msg='Skipping invalid subnet details for team ' ~ team) }} #}
               {% endif %}
             {% endif %}
           {% endfor %}
           {{ final_list }}
+
       
     # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
     - name: Remove VLAN interfaces that do not have an active team assigned
