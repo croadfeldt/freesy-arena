@@ -1,5 +1,5 @@
 - name: Configure sudo privileges for user 'cheesy'
-  hosts: all  # Target all hosts that need this configuration
+  hosts: localhost  # Target all hosts that need this configuration
   become: true # Must run this playbook with root privileges
 
   vars:
