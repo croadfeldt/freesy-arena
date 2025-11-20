@@ -6,7 +6,6 @@
 package network
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/Team254/cheesy-arena/model"
 	"sync"
