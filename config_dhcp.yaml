@@ -1,9 +1,3 @@
-# Ansible Playbook: Configure custom DHCP file and network interfaces (6 VLANs)
-
-# Example Usage: To run this playbook reliably across different shells/sudo usage, use JSON format.
-# Use null, -1, or empty strings for teams that don't need DHCP configured in that specific position:
-# ansible-playbook -e '{"team_numbers": [123, 456, null, -1, "", 000]}' config_dhcp.yaml
-#
 - name: Configure custom DHCP file and network interfaces (6 VLANs)
   hosts: localhost
   connection: local
@@ -42,7 +36,7 @@
           - team_numbers | length == 6
         fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
 
-    # Updated 'Combine and filter configurations' task
+    # This task remains robust as originally written, ensuring 'active_configs' contains dictionaries
     - name: Combine and filter configurations into a single, clean list
       ansible.builtin.set_fact:
         active_configs: >-
@@ -53,7 +47,7 @@
             {# Check if the team number is valid before processing #}
             {% if team is not none and team != '' and team != -1 and team != 0 %}
               {% set subnet_details = team | generate_subnet_details_filter %}
-              {# FIX: Ensure subnet_details is a dictionary before appending #}
+              {# Ensure subnet_details is a dictionary before appending #}
               {% if subnet_details is mapping %}
                 {% set combined = vlan | combine({'subnet': subnet_details}) %}
                 {% set _ = final_list.append(combined) %}
@@ -69,7 +63,7 @@
         state: absent
       loop: "{{ vlan_configs }}" # Loop through ALL original VLANs
       when:
-        # **FIXED:** Use selectattr('name', 'defined') to ensure only valid items are mapped
+        # **FIXED (for 'name' attribute error):** Use selectattr to ensure only valid items are mapped
         - active_configs is iterable
         - item.name not in active_configs | selectattr('name', 'defined') | map(attribute='name') | list
     # ---------------------------------------------------------------
@@ -125,10 +119,9 @@
         ip4: "{{ item.subnet.base_ip_prefix }}.{{ ip_last_octet }}/{{ item.subnet.cidr_prefix }}"
         method4: manual
         autoconnect: yes
-      loop: "{{ active_configs }}"
       register: nmcli_status
-
-    # REMOVED REDUNDANT TASK: The nmcli module handles interface activation when state: present is used.
+      # **FIXED (for 'id'/'name' attribute errors in loop):** Add robust filtering to the loop itself
+      loop: "{{ active_configs | select('mapping') | selectattr('name', 'defined') | selectattr('id', 'defined') }}"
 
   handlers:
     - name: Restart dhcpd service
