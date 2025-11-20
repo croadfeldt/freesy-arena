@@ -53,13 +53,10 @@
             {# Check if the team number is valid before processing #}
             {% if team is not none and team != '' and team != -1 and team != 0 %}
               {% set subnet_details = team | generate_subnet_details_filter %}
-              {# FIX: Ensure subnet_details is a dictionary before appending #}
+              {# FIX: Ensure subnet_details is a dictionary before appending using 'is mapping' #}
               {% if subnet_details is mapping %}
                 {% set combined = vlan | combine({'subnet': subnet_details}) %}
                 {% set _ = final_list.append(combined) %}
-              {% else %}
-                {# Optional: Add a debug message here if you want to know what was skipped #}
-                {# {{ ansible.builtin.debug(msg='Skipping invalid subnet details for team ' ~ team) }} #}
               {% endif %}
             {% endif %}
           {% endfor %}
@@ -73,7 +70,6 @@
           {% for item in active_configs %}
           - Item: {{ item }} | Type: {{ item | type_debug }}
           {% endfor %}
-
       
     # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
     - name: Remove VLAN interfaces that do not have an active team assigned
@@ -137,7 +133,7 @@
       loop: "{{ active_configs }}"
       register: nmcli_status
 
-    # REMOVED REDUNDANT TASK: The nmcli module handles interface activation when state: present is used.
+    # REMOVED REDUNDANT TASK (Activate VLAN interfaces)
 
   handlers:
     - name: Restart dhcpd service
