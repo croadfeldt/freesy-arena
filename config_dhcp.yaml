@@ -53,23 +53,17 @@
             {# Check if the team number is valid before processing #}
             {% if team is not none and team != '' and team != -1 and team != 0 %}
               {% set subnet_details = team | generate_subnet_details_filter %}
-              {# FIX: Ensure subnet_details is a dictionary before appending using 'is mapping' #}
+              {# FIX: Ensure subnet_details is a dictionary before appending #}
               {% if subnet_details is mapping %}
                 {% set combined = vlan | combine({'subnet': subnet_details}) %}
                 {% set _ = final_list.append(combined) %}
+              {% else %}
+                {# Optional: Add a debug message here if you want to know what was skipped #}
+                {# {{ ansible.builtin.debug(msg='Skipping invalid subnet details for team ' ~ team) }} #}
               {% endif %}
             {% endif %}
           {% endfor %}
           {{ final_list }}
-
-    - name: DEBUG: Inspect final active_configs list and types
-      ansible.builtin.debug:
-        msg: |
-          Active Configs Count: {{ active_configs | length }}
-          List contents and types:
-          {% for item in active_configs %}
-          - Item: {{ item }} | Type: {{ item | type_debug }}
-          {% endfor %}
       
     # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
     - name: Remove VLAN interfaces that do not have an active team assigned
@@ -77,8 +71,12 @@
         conn_name: "{{ item.name }}"
         state: absent
       loop: "{{ vlan_configs }}" # Loop through ALL original VLANs
-      when: item.name not in active_configs | map(attribute='name') | list
+      when:
+        # ENSURE active_configs is a list before applying map/list filters
+        - active_configs is iterable
+        - item.name not in active_configs | map(attribute='name') | list
     # ---------------------------------------------------------------
+
 
     - name: Generate the dhcpd-frc.conf file from template (only contains active teams)
       ansible.builtin.template:
@@ -133,7 +131,7 @@
       loop: "{{ active_configs }}"
       register: nmcli_status
 
-    # REMOVED REDUNDANT TASK (Activate VLAN interfaces)
+    # REMOVED REDUNDANT TASK: The nmcli module handles interface activation when state: present is used.
 
   handlers:
     - name: Restart dhcpd service
