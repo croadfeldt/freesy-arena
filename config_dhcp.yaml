@@ -65,6 +65,15 @@
           {% endfor %}
           {{ final_list }}
 
+    - name: DEBUG: Inspect final active_configs list and types
+      ansible.builtin.debug:
+        msg: |
+          Active Configs Count: {{ active_configs | length }}
+          List contents and types:
+          {% for item in active_configs %}
+          - Item: {{ item }} | Type: {{ item | type_debug }}
+          {% endfor %}
+
       
     # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
     - name: Remove VLAN interfaces that do not have an active team assigned
