@@ -129,23 +129,28 @@ func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 
 	// Prepare data structure for JSON marshaling
 	type AnsibleVars struct {
-		TeamNumbers []int `json:"team_numbers"` // Use int type for IDs, JSON handles conversion
+		// TeamNumbers will always contain 6 entries. An empty string indicates a null or empty position.
+		TeamNumbers [6]string `json:"team_numbers"`
 	}
 
-	var ids []int
-	for _, team := range teams {
+	var vars AnsibleVars
+
+	// Populate the fixed-size array, using an empty string for nil entries to maintain position.
+	hasTeams := false
+	for i, team := range teams {
 		if team != nil {
-			ids = append(ids, team.Id)
+			vars.TeamNumbers[i] = fmt.Sprintf("%d", team.Id)
+			hasTeams = true
+		} else {
+			vars.TeamNumbers[i] = "" // Use empty string to represent an empty position.
 		}
 	}
 
-	if len(ids) == 0 {
-		log.Println("No team IDs provided; skipping 'config_dhcp.yaml' playbook.")
+	if !hasTeams {
+		log.Println("No valid team IDs provided; skipping 'config_dhcp.yaml' playbook as all entries are empty.")
 		sw.Status = "ACTIVE"
 		return nil
 	}
-
-	vars := AnsibleVars{TeamNumbers: ids}
 
 	// Safely marshal the Go struct into a JSON byte slice
 	jsonData, err := json.Marshal(vars)
