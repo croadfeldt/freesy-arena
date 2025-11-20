@@ -44,8 +44,6 @@ type UnifiSwitch struct {
 	Status                string
 }
 
-var ServerIpAddress = "10.0.100.5" // The DS will try to connect to this address only.
-
 func NewUnifiSwitch(address, password string) *Switch {
 	return &Switch{
 		address:               address,
@@ -135,26 +133,4 @@ func (sw *Switch) UnifiConfigureTeamEthernet(teams []*model.Team) error {
 
 	sw.Status = "ACTIVE"
 	return nil
-}
-
-// Logs into the switch via Telnet and runs the given command in user exec mode. Reads the output and
-// returns it as a string.
-func (sw *Switch) runLocalCommand(command string) (string, error) {
-	// Pass the command string to the shell via the -c flag
-	cmd := exec.Command("/bin/sh", "-c", commandStr)
-
-	// Create buffers to capture stdout and stderr
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Fatalf("command failed: %v\nOutput: %s", err, string(output))
-	}
-
-	fmt.Println("--- Command Output ---")
-	fmt.Println(string(output))
-
-	return string(output), nil
 }
