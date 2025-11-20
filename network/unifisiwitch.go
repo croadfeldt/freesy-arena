@@ -72,7 +72,7 @@ func (sw *Switch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 	time.Sleep(sw.configPauseDuration)
 
 	// Create the new team VLANs.
-	addTeamVlansCommand := fmt.Sprintf("ansible-playbook -e'{\"team_numbers\": [\"%d\", \"%d\", \"%d\", \"%d\", \"\", \"%d\" ]}' config_dhcp.yaml",
+	addTeamVlansCommand := fmt.Sprintf("ansible-playbook -e'{\"team_numbers\": [\"%d\", \"%d\", \"%d\", \"%d\", \"%d\", \"%d\" ]}' config_dhcp.yaml",
 		teams[0].Id,
 		teams[1].Id,
 		teams[2].Id,
