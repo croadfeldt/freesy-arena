@@ -23,14 +23,15 @@ const (
 	UnifiSwitchAPIPort					= 9999
 )
 
-const (
-	red1Vlan  = 10
-	red2Vlan  = 20
-	red3Vlan  = 30
-	blue1Vlan = 40
-	blue2Vlan = 50
-	blue3Vlan = 60
-)
+// Don't need these for now, ansible has these defined in it already.
+// const (
+// 	red1Vlan  = 10
+// 	red2Vlan  = 20
+// 	red3Vlan  = 30
+// 	blue1Vlan = 40
+// 	blue2Vlan = 50
+// 	blue3Vlan = 60
+// )
 
 type UnifiSwitch struct {
 	address               string
