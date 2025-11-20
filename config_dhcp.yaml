@@ -17,12 +17,12 @@
     ip_last_octet: "4"               # The last octet of the static IP/router IP for all VLANs
     # Define the VLAN IDs and corresponding names
     vlan_configs:
-      - { id: 10, name: "BLUE1" }
-      - { id: 20, name: "BLUE2" }
-      - { id: 30, name: "BLUE3" }
-      - { id: 40, name: "RED1" }
-      - { id: 50, name: "RED2" }
-      - { id: 60, name: "RED3" }
+      - { id: 10, name: "RED1" }
+      - { id: 20, name: "RED2" }
+      - { id: 30, name: "RED3" }
+      - { id: 40, name: "BLUE1" }
+      - { id: 50, name: "BLUE2" }
+      - { id: 60, name: "BLUE3" }
     # ------------------------------------
     # Placeholder variable that will hold the calculated subnets
     subnets_input: [] 
