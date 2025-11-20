@@ -1,34 +1,29 @@
----
-- name: Configure sudoers rule for user cheesy
-  # Targets the local machine itself
-  hosts: localhost
-  connection: local
-  become: yes # Use sudo for administrative tasks
-  gather_facts: no # Not strictly needed for this task
-  
+- name: Configure sudo privileges for user 'cheesy'
+  hosts: localhost  # Target all hosts that need this configuration
+  become: true # Must run this playbook with root privileges
+
   vars:
-    sudoers_file_path: "/etc/sudoers.d/cheesy_ansible_pb"
-    sudoers_rule: "cheesy ALL=(ALL) NOPASSWD: /usr/bin/ansible-playbook"
-    # NOTE: Verify the path to ansible-playbook on your target systems
+    target_user: cheesy
+    sudoers_file_path: "/etc/sudoers.d/99-{{ target_user }}-ansible"
 
   tasks:
-    - name: Ensure the sudoers directory exists (it should by default)
+    - name: Ensure the sudoers.d directory exists (standard configuration)
       ansible.builtin.file:
-        path: "/etc/sudoers.d/"
+        path: /etc/sudoers.d
         state: directory
         mode: '0755'
 
-    - name: Add the NOPASSWD rule to a dedicated file in sudoers.d
+    - name: Create or update the sudoers file snippet for user '{{ target_user }}'
       ansible.builtin.lineinfile:
         path: "{{ sudoers_file_path }}"
-        line: "{{ sudoers_rule }}"
-        create: true             # Create the file if it doesn't exist
-        validate: 'visudo -cf %s' # Validate the syntax using visudo
-        mode: '0440'             # Set secure permissions required by sudo
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: ALL"
+        create: true  # Create the file if it doesn't exist
+        mode: '0440'  # Set secure permissions (read-only for owner/group)
+        validate: 'visudo -cf %s' # Validate syntax with visudo before saving
 
-    - name: Verify that the user cheesy can use the command (optional test)
-      ansible.builtin.command: sudo -u cheesy -n /usr/bin/ansible-playbook --version
-      register: test_result
-      changed_when: false
-      failed_when: test_result.rc != 0 and test_result.rc != 2 # ans-playbook returns 2 on missing PB argument
-      # The above command tests if 'sudo' works without a password prompt (-n)
+    - name: Verify that the user '{{ target_user }}' exists
+      ansible.builtin.user:
+        name: "{{ target_user }}"
+        state: present
+      # This task ensures the user is present on the system before they can use the rule,
+      # but it's optional if you know the user already exists.

@@ -24,8 +24,6 @@
       - { id: 50, name: "RED2" }
       - { id: 60, name: "RED3" }
     # ------------------------------------
-    # Placeholder variable that will hold the calculated subnets
-    subnets_input: [] 
 
   tasks:
     - name: Ensure dhcpd config directory exists
@@ -42,11 +40,39 @@
         that:
           - team_numbers is defined
           - team_numbers | length == 6
-        fail_msg: "team_numbers must be defined as a list of exactly 6 numbers or placeholders."
+        fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
 
-    - name: Dynamically generate the list of CIDR subnets details from team numbers (filter returns None for empty slots)
+    # This task remains robust as originally written, ensuring 'active_configs' contains dictionaries
+    - name: Combine and filter configurations into a single, clean list
       ansible.builtin.set_fact:
-        subnets_details: "{{ team_numbers | map('generate_subnet_details_filter') | list }}"
+        active_configs: >-
+          {% set final_list = [] %}
+          {% for vlan in vlan_configs %}
+            {% set index = loop.index - 1 %}
+            {% set team = team_numbers[index] | default(None) %}
+            {# Check if the team number is valid before processing #}
+            {% if team is not none and team != '' and team != -1 and team != 0 %}
+              {% set subnet_details = team | generate_subnet_details_filter %}
+              {# Ensure subnet_details is a dictionary before appending #}
+              {% if subnet_details is mapping %}
+                {% set combined = vlan | combine({'subnet': subnet_details}) %}
+                {% set _ = final_list.append(combined) %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {{ final_list }}
+      
+    # --- Ensure non-active VLAN interfaces are removed (existing logic simplified) ---
+    - name: Remove VLAN interfaces that do not have an active team assigned
+      community.general.nmcli:
+        conn_name: "{{ item.name }}"
+        state: absent
+      loop: "{{ vlan_configs }}" # Loop through ALL original VLANs
+      when:
+        # **FIXED (for 'name' attribute error):** Use selectattr to ensure only valid items are mapped
+        - active_configs is iterable
+        - item.name not in active_configs | selectattr('name', 'defined') | map(attribute='name') | list
+    # ---------------------------------------------------------------
 
     - name: Generate the dhcpd-frc.conf file from template (template skips generation for None entries)
       ansible.builtin.template:
@@ -57,17 +83,23 @@
         mode: '0640'
       notify:
         - Restart dhcpd service
+      when: active_configs | length > 0
+
+    # The remaining tasks iterate ONLY over the clean 'active_configs'
 
     - name: Check if SELinux is enabled
       ansible.builtin.command: getenforce
       changed_when: false
       failed_when: false
       register: getenforce_result
+      when: active_configs | length > 0
 
     - name: Apply standard SELinux file context (if SELinux is enforcing)
       ansible.builtin.command: >
         restorecon -v "{{ target_directory }}"
-      when: getenforce_result.stdout == 'Enforcing'
+      when: 
+        - getenforce_result.stdout == 'Enforcing'
+        - active_configs | length > 0
       notify:
         - Restart dhcpd service
 
@@ -77,14 +109,15 @@
         line: 'include "{{ target_file_path }}";'
         state: present
         regexp: '^#?\s*include\s*["'']{{ target_file_path }}["''];?$'
+      when: active_configs | length > 0
       notify:
         - Restart dhcpd service
 
     # If a team number was null/empty, 'subnet_details' will contain 'None' for that position.
     - name: Ensure VLAN interfaces are configured with static IPs where team numbers exist, remove those that don't
       community.general.nmcli:
-        conn_name: "{{ item.0.name }}"
-        ifname: "{{ item.0.name }}"
+        conn_name: "{{ item.name }}"
+        ifname: "{{ item.name }}"
         type: vlan
         vlandev: "{{ parent_interface }}"
         state: present
@@ -93,7 +126,6 @@
         ip4: "{{ (item.1.base_ip_prefix + '.' + ip_last_octet + '/' + item.1.cidr_prefix|string) if item.1 else [] }}"
         method4: "{{ 'manual' if item.1 else 'disabled' }}"
         autoconnect: yes
-      loop: "{{ vlan_configs | zip(subnets_details) | list }}"
       register: nmcli_status
 
     # This loop runs the 'up' command only for interfaces where state was changed by nmcli.
