@@ -73,7 +73,7 @@ func (sw *UnifiSwitch) runExecCommand(name string, args ...string) error {
 	return nil
 }
 
-func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams []*model.Team) error {
+func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 	// Make sure multiple configurations aren't being set at the same time.
 	sw.mutex.Lock()
 	defer sw.mutex.Unlock()
