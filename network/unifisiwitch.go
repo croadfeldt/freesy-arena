@@ -43,8 +43,8 @@ type UnifiSwitch struct {
 	Status                string
 }
 
-func NewUnifiSwitch(address, password string) *Switch {
-	return &Switch{
+func NewUnifiSwitch(address, password string) *UnifiSwitch {
+	return &UnifiSwitch{
 		address:               address,
 		port:                  UnifiSwitchAPIPort,
 		password:              password,
@@ -56,7 +56,7 @@ func NewUnifiSwitch(address, password string) *Switch {
 
 // Sets up wired networks for the given set of teams.
 // Helper function to run commands safely using os/exec
-func (sw *Switch) runExecCommand(name string, args ...string) error {
+func (sw *UnifiSwitch) runExecCommand(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	
 	// Optional: Attach stdout/stderr for debugging/logging
@@ -73,7 +73,7 @@ func (sw *Switch) runExecCommand(name string, args ...string) error {
 	return nil
 }
 
-func (sw *Switch) UnifiConfigureTeamEthernet(teams []*model.Team) error {
+func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams []*model.Team) error {
 	// Make sure multiple configurations aren't being set at the same time.
 	sw.mutex.Lock()
 	defer sw.mutex.Unlock()
