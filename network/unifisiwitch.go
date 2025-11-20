@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	switchConfigBackoffDurationSec = 5
-	switchConfigPauseDurationSec   = 2
-	switchTeamGatewayAddress       = 4
-	switchTelnetPort               = 23
+	// This are not used yet, but may in the future if we tap into the API vs ansible
+	UnifiSwitchConfigBackoffDurationSec = 5
+	UnifiSwitchConfigPauseDurationSec   = 2
+	UnifiSwitchTeamGatewayAddress       = 4
+	UnifiSwitchAPIPort					= 9999
 )
 
 const (
@@ -46,10 +47,10 @@ var ServerIpAddress = "10.0.100.5" // The DS will try to connect to this address
 func NewUnifiSwitch(address, password string) *Switch {
 	return &Switch{
 		address:               address,
-		port:                  switchTelnetPort,
+		port:                  UnifiSwitchAPIPort,
 		password:              password,
-		configBackoffDuration: switchConfigBackoffDurationSec * time.Second,
-		configPauseDuration:   switchConfigPauseDurationSec * time.Second,
+		configBackoffDuration: UnifiSwitchConfigBackoffDurationSec * time.Second,
+		configPauseDuration:   UnifiSwitchConfigPauseDurationSec * time.Second,
 		Status:                "UNKNOWN",
 	}
 }
