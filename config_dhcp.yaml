@@ -53,8 +53,11 @@
             {# Check if the team number is valid before processing #}
             {% if team is not none and team != '' and team != -1 and team != 0 %}
               {% set subnet_details = team | generate_subnet_details_filter %}
-              {% set combined = vlan | combine({'subnet': subnet_details}) %}
-              {% set _ = final_list.append(combined) %}
+              {# FIX: Check if the filter returned a valid dictionary (not None) #}
+              {% if subnet_details is not none %}
+                {% set combined = vlan | combine({'subnet': subnet_details}) %}
+                {% set _ = final_list.append(combined) %}
+              {% endif %}
             {% endif %}
           {% endfor %}
           {{ final_list }}
@@ -75,7 +78,6 @@
         owner: root
         group: dhcpd
         mode: '0640'
-      # Now loop over the clean 'active_configs' list
       notify:
         - Restart dhcpd service
       when: active_configs | length > 0
@@ -122,12 +124,7 @@
       loop: "{{ active_configs }}"
       register: nmcli_status
 
-    - name: Activate VLAN interfaces if configured or modified
-      community.general.nmcli:
-        conn_name: "{{ item.name }}"
-        state: up
-      loop: "{{ active_configs }}"
-      when: nmcli_status is changed or nmcli_status is not changed
+    # REMOVED REDUNDANT TASK: The nmcli module handles interface activation when state: present is used.
 
   handlers:
     - name: Restart dhcpd service
