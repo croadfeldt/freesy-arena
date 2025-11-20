@@ -40,10 +40,9 @@
         that:
           - team_numbers is defined
           - team_numbers | length == 6
-        fail_msg: "team_numbers must be defined as a list of exactly 6 entries (use null/empty string for skipped entries)."
+        fail_msg: "team_numbers must be defined as a list of exactly 6 numbers or placeholders."
 
-    # This task remains robust as originally written, ensuring 'active_configs' contains dictionaries
-    - name: Combine and filter configurations into a single, clean list
+    - name: Dynamically generate the list of CIDR subnets details from team numbers (filter returns None for empty slots)
       ansible.builtin.set_fact:
         active_configs: >-
           {% set final_list = [] %}
