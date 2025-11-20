@@ -57,9 +57,6 @@
               {% if subnet_details is mapping %}
                 {% set combined = vlan | combine({'subnet': subnet_details}) %}
                 {% set _ = final_list.append(combined) %}
-              {% else %}
-                {# Optional: Add a debug message here if you want to know what was skipped #}
-                {# {{ ansible.builtin.debug(msg='Skipping invalid subnet details for team ' ~ team) }} #}
               {% endif %}
             {% endif %}
           {% endfor %}
@@ -72,9 +69,9 @@
         state: absent
       loop: "{{ vlan_configs }}" # Loop through ALL original VLANs
       when:
-        # ENSURE active_configs is a list before applying map/list filters
+        # **FIXED:** Use selectattr('name', 'defined') to ensure only valid items are mapped
         - active_configs is iterable
-        - item.name not in active_configs | map(attribute='name') | list
+        - item.name not in active_configs | selectattr('name', 'defined') | map(attribute='name') | list
     # ---------------------------------------------------------------
 
 
