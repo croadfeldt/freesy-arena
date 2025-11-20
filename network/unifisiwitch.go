@@ -159,10 +159,10 @@ func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 		return fmt.Errorf("failed to marshal JSON for ansible vars: %w", err)
 	}
 
-	// The -e argument needs the JSON string wrapped in single quotes for the shell to interpret it correctly
-	extraVarsArg := fmt.Sprintf("'%s'", string(jsonData))
+	// Pass the raw JSON string as a single argument for the -e flag
+	extraVarsArg := string(jsonData)
 
-	// Execute the command safely
+	// Execute the command safely, passing each argument as a separate element in the list
 	err = sw.runExecCommand("ansible-playbook", "-e", extraVarsArg, "config_dhcp.yaml")
 	if err != nil {
 		sw.Status = "ERROR"
