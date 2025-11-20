@@ -3,12 +3,16 @@
 authoritative;
 
 # DHCP options for each subnet
-{% for config in active_configs | selectattr('id', 'defined') %}
-# Subnet configuration for VLAN {{ config.id }} ({{ config.name }})
-subnet {{ config.subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask {{ config.subnet.netmask }} {
-    option routers {{ config.subnet.gateway }};
-    option subnet-mask {{ config.subnet.netmask }};
-    option broadcast-address {{ config.subnet.broadcast_ip }};
-    range {{ config.subnet.first_assignable_ip }} {{ config.subnet.last_assignable_ip }};
+{% for vlan, subnet in vlan_configs | zip(subnets_details) %}
+{# Check if the subnet details are valid (not None) before proceeding #}
+{% if subnet %}
+# Subnet configuration for VLAN {{ vlan.id }} ({{ vlan.name }})
+subnet {{ subnet.subnet_cidr | ansible.utils.ipaddr('network') }} netmask 255.255.255.0 {
+    option routers {{ subnet.base_ip_prefix }}.{{ ip_last_octet }};
+    option subnet-mask 255.255.255.0;
+    option broadcast-address {{ subnet.broadcast_ip }};
+    range {{ subnet.first_assignable_ip }} {{ subnet.last_assignable_ip }};
 }
+{% endif %}
 {% endfor %}
+
