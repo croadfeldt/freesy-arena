@@ -59,6 +59,7 @@ type Arena struct {
 	EventSettings    *model.EventSettings
 	accessPoint      network.AccessPoint
 	networkSwitch    *network.Switch
+	UnifiSwitch	 *network.UnifiSwitch
 	redSCC           *network.SCCSwitch
 	blueSCC          *network.SCCSwitch
 	Plc              plc.Plc
@@ -207,6 +208,7 @@ func (arena *Arena) LoadSettings() error {
 		accessPointWifiStatuses,
 	)
 	arena.networkSwitch = network.NewSwitch(settings.SwitchAddress, settings.SwitchPassword)
+	arena.UnifiSwitch = network.NewUnifiSwitch(settings.SwitchAddress, settings.SwitchPassword)
 	sccUpCommands := strings.Split(settings.SCCUpCommands, "\n")
 	sccDownCommands := strings.Split(settings.SCCDownCommands, "\n")
 	arena.redSCC = network.NewSCCSwitch(
@@ -1135,7 +1137,9 @@ func (arena *Arena) setupNetwork(teams [6]*model.Team, isPreload bool) {
 		}
 		go func() {
 			arena.setSCCEthernetEnabled(false)
-			if err := arena.networkSwitch.ConfigureTeamEthernet(teams); err != nil {
+			//if err := arena.networkSwitch.ConfigureTeamEthernet(teams); err != nil {
+			// Need to have a UI switch that allows us to change our switch architecture, for now, disable Cisco decision points.
+			if err := arena.UnifiSwitch.UnifiConfigureTeamEthernet(teams); err != nil {
 				log.Printf("Failed to configure team Ethernet: %s", err.Error())
 			}
 			arena.setSCCEthernetEnabled(true)
