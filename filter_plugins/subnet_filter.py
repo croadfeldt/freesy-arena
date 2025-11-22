@@ -24,8 +24,13 @@ def generate_subnet_details_filter(team_number_input):
         second_octet = 0
         third_octet = 0
 
-        if len(team_num_str) <= 3:
+        if len(team_num_str) <= 2:
+            # For 1 or 2 digit teams, place the whole number in the third octet
             third_octet = team_number
+        elif len(team_num_str) == 3:
+            # For 3 digit teams: first digit is second octet, last two are third octet
+            second_octet = int(team_num_str[0])
+            third_octet = int(team_num_str[1:])
         elif len(team_num_str) == 4:
             second_octet = int(team_num_str[:2])
             third_octet = int(team_num_str[2:])
@@ -62,4 +67,3 @@ class FilterModule(object):
         return {
             'generate_subnet_details_filter': generate_subnet_details_filter
         }
-
