@@ -1,9 +1,9 @@
 # freesy-arena — Fork Design Notes
 
 **Status:** Living document (fork notes)
-**Last updated:** 2026-05-25
-**Upstream:** `cpapplefamily/freesy-arena` (itself a fork of [Team254/cheesy-arena](https://github.com/Team254/cheesy-arena), the official Cheesy Arena FMS)
-**Active branch:** `Freezy-Arena-2025`
+**Last updated:** 2026-11-16
+**Upstream:** [`Freezy-Arena/freezy-arena`](https://github.com/Freezy-Arena/freezy-arena) (successor to `cpapplefamily/freesy-arena`; itself a fork of [Team254/cheesy-arena](https://github.com/Team254/cheesy-arena), the official Cheesy Arena FMS)
+**Active branch:** `Freezy-Arena-2026` (2026 game). `Freezy-Arena-2025` remains for 2025 Reefscape rules.
 **README:** retains upstream Cheesy Arena content; this document captures what *this fork* changes.
 
 This document records the design intent of the freesy-arena fork — what it adds on top of upstream Cheesy Arena and why. Update it whenever a new fork-specific feature lands or an upstream feature is reverted/disabled.
@@ -48,10 +48,14 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 ## Branch model
 
-- `main` — tracking upstream Cheesy Arena.
-- `Works` — historical "known-good" branch used during early fork stabilization. Most fork-specific code originated here.
-- `Freezy-Arena-2025` — **active fork branch**, contains the 2025 Reefscape upstream + all fork-specific features ported on top. This is what runs in production at MN off-season events.
-- `remotes/upstream/*` — periodically pulled to track upstream feature releases (e.g. `2025-Reefscape-Week-0`, `2-min-head-referee-timer`, `API-for-Auto-Scoring`).
+- `Freezy-Arena-2026` — **current fork branch**: `Freezy-Arena/freezy-arena` `main` (2026 game) with the fork-specific commits replayed on top. Created 2026-11-16; needs a field-server test of the UniFi/DHCP path before it replaces `Freezy-Arena-2025` at events.
+- `Freezy-Arena-2025` — the 2025 Reefscape branch, built on the old `cpapplefamily/freesy-arena` history. Kept for events still running 2025 rules and as the rollback.
+- `main` — an older, parallel attempt at the UniFi/DHCP work. Superseded by the branches above; left as-is.
+- `Works` — historical "known-good" branch used during early fork stabilization.
+
+### Taking upstream updates
+
+`Freezy-Arena/freezy-arena` was rebuilt on Team254's `cheesy-arena`, so it only shares history with the old `cpapplefamily` lineage up to May 2025. Merging it into `Freezy-Arena-2025` produces 59 conflicts. The fork-specific work is small (the commits after upstream's tip on this branch), so the update method is: branch from upstream `main` and cherry-pick those commits. The Go touch points are three places in `field/arena.go` and one in `field/arena_notifiers.go`.
 
 ## Design choices
 
@@ -61,9 +65,11 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 ## Known limitations / future work
 
+- **Switch type is hard-coded.** `field/arena.go` calls the UniFi path unconditionally. A setting to choose Cisco or UniFi is planned for the next round of changes.
+- **Firewall rules are not in this repo.** They are managed outside it today; bringing them under the same Ansible flow is planned alongside the switch-type setting.
 - **No CI for fork-specific code paths.** Upstream test suite runs; UniFi driver and Ansible playbooks have no automated coverage. Adding `network/unifiswitch_test.go` parity with `sccswitch_test.go` is the obvious next step.
 - **Documentation gap** — the fork-specific features above are not surfaced in the upstream-derived README. End users find them by reading the bracket-size dropdown or the FTA monitor UI directly. A `docs/fork-features.md` walkthrough with screenshots would help operators new to the fork.
-- **Upstream merge cadence** — currently periodic (`Merge pull request #1/#2 from joshzcold/master`-style flow). Decide whether to track every upstream release or only ones that affect Reefscape rules / scoring.
+- **Upstream merge cadence** — currently periodic (`Merge pull request #1/#2 from joshzcold/master`-style flow). Decide whether to track every upstream release or only ones that affect game rules / scoring.
 - **3-team and 5-team / 7-team brackets** — verify the bracket-generation correctness with a structured test rather than the spot-check used during initial dev.
 - **UniFi controller credential handling** — currently in Ansible vars. Migrate to a secrets store (ansible-vault or HashiCorp Vault) before the fork is used at events beyond MN off-season.
 - **Cisco switch code** — disabled but still present. Decide whether to remove it entirely (smaller surface, cleaner reads) or keep it for future option-value (Cisco hardware comes back).
