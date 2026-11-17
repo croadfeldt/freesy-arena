@@ -1,0 +1,191 @@
+# One-time setup of the field server for Freezy Arena's team networks. Run it as root on the field
+# server, from a checkout of this repository, and again whenever these files change:
+#
+#   ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
+#
+# It installs the host network helper, the per-match playbook and the team VLAN filter, creates any of
+# the six team VLAN connections that do not exist yet, and enables the services. See ../README.md.
+#
+# It installs no packages and leaves alone the FMS address, existing connections, and any other
+# firewall on the host. It stops before changing anything if the host is not ready.
+- name: Set up the field server for Freezy Arena team networks
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  vars:
+    freezy_src: "{{ playbook_dir }}/.."
+    freezy_share: /usr/share/freezy-net
+  tasks:
+    - name: Load host overrides, if any
+      ansible.builtin.include_vars:
+        file: /etc/freezy-net/vars.yaml
+      when: "'/etc/freezy-net/vars.yaml' is file"
+      tags: always
+
+    # ---- Checks: nothing is changed until all of these pass. ----
+
+    - name: Check the programs this setup relies on are installed
+      ansible.builtin.shell: |
+        for c in nmcli nft kea-dhcp4 ansible-playbook python3; do
+          command -v "$c" >/dev/null || echo "$c"
+        done
+      register: freezy_missing
+      changed_when: false
+      failed_when: freezy_missing.stdout_lines | length > 0
+      tags: host
+
+    - name: Check the arena's account exists
+      ansible.builtin.command: id -u {{ freezy_arena_user }}
+      changed_when: false
+      tags: host
+
+    - name: Check the FMS address is up
+      ansible.builtin.command: ip -4 -o addr show
+      register: freezy_addresses
+      changed_when: false
+      failed_when: (' ' ~ freezy_fms_address ~ '/') not in freezy_addresses.stdout
+      tags: host
+
+    - name: Check the field interface exists
+      ansible.builtin.command: ip link show {{ freezy_field_interface }}
+      changed_when: false
+      tags: host
+
+    - name: List the NetworkManager connections
+      ansible.builtin.command: nmcli -g NAME connection show
+      register: freezy_connections
+      changed_when: false
+      tags: host
+
+    # A connection that already exists is kept as it is, but it has to be the VLAN vars.yaml says it is:
+    # the per-match step and Kea both use the connection name as the interface name.
+    - name: Read the team VLAN connections that already exist
+      ansible.builtin.command: >-
+        nmcli -g connection.type,connection.interface-name,vlan.id connection show {{ item.connection }}
+      register: freezy_existing
+      changed_when: false
+      failed_when: >-
+        freezy_existing.rc != 0
+        or freezy_existing.stdout_lines != ['vlan', item.connection, item.vlan | string]
+      when: item.connection in freezy_connections.stdout_lines
+      loop: "{{ freezy_team_vlans }}"
+      loop_control:
+        label: "{{ item.station }}"
+      tags: host
+
+    # ---- Files. Everything goes under /usr; the only host-specific file is the filter's variables. ----
+
+    - name: Create the directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ freezy_share }}"
+        - "{{ freezy_share }}/templates"
+        - /etc/freezy-net
+        - /usr/lib/systemd/system/kea-dhcp4.service.d
+      tags: files
+
+    - name: Install the helper, the playbooks and the units
+      ansible.builtin.copy:
+        src: "{{ freezy_src }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0644') }}"
+      loop:
+        - { src: freezy-net-helper, dest: /usr/libexec/freezy-net-helper, mode: "0755" }
+        - { src: freezy-net.path, dest: /usr/lib/systemd/system/freezy-net.path }
+        - { src: freezy-net.service, dest: /usr/lib/systemd/system/freezy-net.service }
+        - { src: freezy-firewall.service, dest: /usr/lib/systemd/system/freezy-firewall.service }
+        - { src: kea-dhcp4-freezy.conf, dest: /usr/lib/systemd/system/kea-dhcp4.service.d/freezy.conf }
+        - { src: freezy-field.nft, dest: "{{ freezy_share }}/freezy-field.nft" }
+        - { src: ansible/match_network.yaml, dest: "{{ freezy_share }}/match_network.yaml" }
+        - { src: ansible/vars.yaml, dest: "{{ freezy_share }}/vars.yaml" }
+        - { src: ansible/templates/kea-dhcp4.conf.j2, dest: "{{ freezy_share }}/templates/kea-dhcp4.conf.j2" }
+      loop_control:
+        label: "{{ item.dest }}"
+      register: freezy_installed
+      tags: files
+
+    - name: Install the spool directory definition for the arena's account
+      ansible.builtin.copy:
+        content: |
+          {{ lookup('ansible.builtin.file', freezy_src ~ '/freezy-net.tmpfiles.conf')
+             | replace('cheesy cheesy', freezy_arena_user ~ ' ' ~ freezy_arena_user) }}
+        dest: /usr/lib/tmpfiles.d/freezy-net.conf
+        owner: root
+        group: root
+        mode: "0644"
+      tags: files
+
+    # nft checks the whole rule set with these values before the file is replaced.
+    - name: Write the team VLAN filter's variables
+      ansible.builtin.template:
+        src: templates/freezy-field-vars.nft.j2
+        dest: /etc/freezy-net/freezy-field-vars.nft
+        owner: root
+        group: root
+        mode: "0644"
+        validate: >-
+          sh -c 'd=$(mktemp -d) && cp %s $d/freezy-field-vars.nft
+          && nft -c -I $d -f {{ freezy_share }}/freezy-field.nft; rc=$?; rm -rf $d; exit $rc'
+      register: freezy_filter_vars
+      tags: files
+
+    # ---- The host itself. The filter goes in first, before any new team VLAN exists. ----
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags: host
+
+    - name: Load the team VLAN filter now and at every boot
+      ansible.builtin.systemd:
+        name: freezy-firewall.service
+        enabled: true
+        state: >-
+          {{ 'reloaded' if (freezy_filter_vars.changed or freezy_installed.changed) else 'started' }}
+      tags: host
+
+    - name: Check the filter is loaded
+      ansible.builtin.command: nft list table inet freezy_field
+      changed_when: false
+      tags: host
+
+    - name: Create the team VLAN connections that are missing
+      ansible.builtin.command: >-
+        nmcli connection add type vlan con-name {{ item.connection }} ifname {{ item.connection }}
+        dev {{ freezy_field_interface }} id {{ item.vlan }}
+        ipv4.method disabled ipv6.method disabled connection.autoconnect yes
+      when: item.connection not in freezy_connections.stdout_lines
+      loop: "{{ freezy_team_vlans }}"
+      loop_control:
+        label: "{{ item.station }}"
+      tags: host
+
+    - name: Create the spool directories
+      ansible.builtin.command: systemd-tmpfiles --create /usr/lib/tmpfiles.d/freezy-net.conf
+      changed_when: false
+      tags: host
+
+    - name: Watch for the arena's requests now and at every boot
+      ansible.builtin.systemd:
+        name: freezy-net.path
+        enabled: true
+        state: started
+      tags: host
+
+    # Kea is only enabled here. It starts serving when the arena loads the first match, and comes back
+    # with that match's configuration after a reboot.
+    - name: Start Kea at every boot
+      ansible.builtin.systemd:
+        name: "{{ freezy_kea_service }}"
+        enabled: true
+      tags: host

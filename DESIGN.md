@@ -33,8 +33,8 @@ Forking with upstream's permission lets these changes ship without round-trips t
 ### Networking — UniFi switch path
 
 - **`network/unifiswitch.go`** — UniFi switch driver as an alternative to upstream's Cisco-only `sccswitch.go`. Provisioned via SSH/REST against the UniFi controller.
-- **`unifi_cycle_switch_ports.yaml`** — Ansible playbook that bounces a team's switch port to force a DHCP-lease refresh (workaround for sticky-MAC issues when teams swap robots between matches).
-- **`create_vlans.yaml`** — Ansible playbook that provisions per-team VLANs on the UniFi controller (analogue to the Cisco VLAN-create step upstream).
+- **`deploy/host/ansible/host_setup.yaml`** — one-time Ansible setup of the field server: installs the host helper and per-match playbook, creates the six team VLAN connections, and loads the team VLAN filter. It replaced `create_vlans.yaml`, which assumed a different interface layout, and the unused `unifi_cycle_switch_ports.yaml`.
+- **`deploy/host/freezy-field.nft`** — what a team VLAN may reach on the field server: the stock `DS-FMS` access list (driver station traffic to the FMS address, ping, DHCP). The arena's web pages are not reachable from a driver station. Tested by `deploy/host/test_freezy_firewall.sh`.
 - **Cisco switch architecture fully disabled** — `sccswitch.go` code paths are not exercised in fork builds; the build is UniFi-first.
 
 ### Networking — local DHCP
@@ -71,7 +71,6 @@ Forking with upstream's permission lets these changes ship without round-trips t
 ## Known limitations / future work
 
 - **Switch type is hard-coded.** `field/arena.go` calls the UniFi path unconditionally. A setting to choose Cisco or UniFi is planned for the next round of changes.
-- **Firewall rules are not in this repo.** They are managed outside it today; bringing them under the same Ansible flow is planned alongside the switch-type setting.
 - **No CI for fork-specific code paths.** Upstream test suite runs; UniFi driver and Ansible playbooks have no automated coverage. Adding `network/unifiswitch_test.go` parity with `sccswitch_test.go` is the obvious next step.
 - **Documentation gap** — the fork-specific features above are not surfaced in the upstream-derived README. End users find them by reading the bracket-size dropdown or the FTA monitor UI directly. A `docs/fork-features.md` walkthrough with screenshots would help operators new to the fork.
 - **Upstream merge cadence** — currently periodic (`Merge pull request #1/#2 from joshzcold/master`-style flow). Decide whether to track every upstream release or only ones that affect game rules / scoring.

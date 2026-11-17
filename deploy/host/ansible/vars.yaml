@@ -2,6 +2,13 @@
 # Host-specific values for the Freezy Arena team networks. This is the one place to change them.
 # On the field server, overrides go in /etc/freezy-net/vars.yaml (same keys); that file wins.
 
+# The network interface that carries the field VLANs. Only the one-time host setup uses it, to create
+# any team VLAN connection that does not exist yet.
+freezy_field_interface: enp1s0
+
+# The account the arena's container runs as. It owns the request directory.
+freezy_arena_user: cheesy
+
 # The six team VLANs, in the arena's station order. `connection` is the NetworkManager connection (and
 # interface) that carries the VLAN on the field server; the one-time host setup creates them.
 freezy_team_vlans:
@@ -21,6 +28,8 @@ freezy_dhcp_lease_seconds: 3600
 
 # The FMS address. The per-match step never changes it; it only refuses to run if it is missing.
 freezy_fms_address: 10.0.100.5
+# The FMS network. Team VLANs may ping it (access point, switch); nothing else there is reachable.
+freezy_fms_network: 10.0.100.0/24
 
 freezy_kea_config: /etc/kea/kea-dhcp4.conf
 freezy_kea_service: kea-dhcp4.service

@@ -1,0 +1,50 @@
+#!/usr/sbin/nft -f
+# What the team VLANs may reach on the field server. This reproduces the DS-FMS access list from the
+# stock Cisco configuration (switch_config.txt): a driver station or robot gets driver station traffic
+# to the FMS address, ping, and DHCP. Everything else is dropped, including the arena's web pages and
+# traffic between teams.
+#
+# Loaded by freezy-firewall.service. The interface names and addresses come from
+# freezy-field-vars.nft, which the host setup playbook writes from ansible/vars.yaml.
+#
+# The table only ever drops traffic that arrives on a team VLAN; other interfaces pass straight
+# through, so it sits alongside firewalld or any other rules on the host.
+
+include "freezy-field-vars.nft"
+
+table inet freezy_field
+delete table inet freezy_field
+
+table inet freezy_field {
+    chain input {
+        type filter hook input priority filter - 10; policy accept;
+
+        iifname != $team_vlans accept
+        ct state established,related accept
+
+        # Driver station to FMS: status packets and the control connection.
+        ip daddr $fms_address udp dport 1160 accept
+        ip daddr $fms_address tcp dport 1750 accept
+
+        # Ping to the FMS network and to the team's own gateway (10.TE.AM.4).
+        ip daddr $fms_network ip protocol icmp accept
+        ip daddr & 0.0.0.255 == $team_gateway_host ip protocol icmp accept
+
+        # DHCP requests.
+        udp sport 68 udp dport 67 accept
+
+        counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter - 10; policy accept;
+
+        iifname != $team_vlans accept
+        ct state established,related accept
+
+        ip daddr $fms_network ip protocol icmp accept
+
+        # Nothing else leaves a team VLAN: not to another team, not to the rest of the network.
+        counter drop
+    }
+}
