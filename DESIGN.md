@@ -48,7 +48,7 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 ## Running as a rootless container
 
-- **`Containerfile`** builds a static binary and an image that carries `templates/`, `static/`, `schedules/` and `font/`. Everything the server writes (event database, backups, match logs, team avatars) is redirected into one volume at `/data`.
+- **`Containerfile`** builds a static binary and an image that carries `templates/`, `static/`, `schedules/` and `font/`. Everything the server writes (event database, backups, match logs, uploaded logos, team avatars) is redirected into one volume at `/data`. `static/img` lives in the volume; the entrypoint refreshes the shipped images from the image's own copy at every start, so they still update with the image.
 - **`deploy/freezy-arena.container`** is a Quadlet unit that runs the image rootless under the field-server user, with host networking (the driver-station listener binds 10.0.100.5 and the server talks to the field VLANs directly).
 - **`deploy/host/`** is the root-owned host network helper. A rootless container cannot change the host's VLAN interfaces or DHCP server, so the arena hands the six team numbers to this helper through a spool directory and waits for its verdict. The step cannot be skipped: no answer, or a failed playbook, shows as a switch ERROR. See `deploy/host/README.md`. Logos uploaded through the Setup menu land in `static/img` inside the container and do not survive an image rebuild.
 
