@@ -1,0 +1,10 @@
+# Applies the team networks for the match the arena has loaded. Started by freezy-net.path; runs as root.
+[Unit]
+Description=Apply Freezy Arena team networks
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/freezy-net-helper
+# The helper reports failures to the arena itself; do not let a failed run block the next request.
+SuccessExitStatus=1

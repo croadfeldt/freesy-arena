@@ -7,6 +7,8 @@
 #   systemctl --user daemon-reload
 #   systemctl --user start freezy-arena
 #
+# The host network helper in deploy/host/ must be installed first; it creates /run/freezy-net.
+#
 # Host networking is required: the server binds the driver-station listener to 10.0.100.5 and talks
 # to robots, the access point, the switch and the PLC directly on the field VLANs.
 
@@ -18,6 +20,10 @@ ContainerName=freezy-arena
 Image=localhost/freezy-arena:latest
 Network=host
 Volume=freezy-arena-data:/data
+# Spool shared with the root-owned host network helper (deploy/host/). The arena writes requests and
+# reads results; it has no other way to change the host's network.
+Volume=/run/freezy-net/request:/run/freezy-net/request:z
+Volume=/run/freezy-net/result:/run/freezy-net/result:ro
 Timezone=local
 
 [Service]

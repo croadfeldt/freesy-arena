@@ -1,7 +1,10 @@
-// Copyright 2014 Team 254. All Rights Reserved.
-// Author: pat@patfairbank.com (Patrick Fairbank)
+// Copyright 2025 Freezy Arena contributors. All Rights Reserved.
 //
-// Methods for configuring a Cisco Switch 3500-series switch for team VLANs.
+// Methods for configuring the team networks when the field server itself routes the team VLANs and serves
+// their DHCP (the UniFi-switch layout), instead of a Cisco switch doing both.
+//
+// The arena does not change the host's network itself. It hands the six team numbers to a root-owned helper
+// on the host through a spool directory and waits for the helper's verdict. See deploy/host/README.md.
 
 package network
 
@@ -9,169 +12,143 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Team254/cheesy-arena/model"
-	"io"
-	"log"
-	"os/exec"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
 
 const (
-	// This are not used yet, but may in the future if we tap into the API vs ansible
-	UnifiSwitchConfigBackoffDurationSec = 5
-	UnifiSwitchConfigPauseDurationSec   = 2
-	UnifiSwitchTeamGatewayAddress       = 4
-	UnifiSwitchAPIPort                  = 9999
+	unifiSwitchRequestFile          = "teams.json"
+	unifiSwitchResultFile           = "status.json"
+	unifiSwitchResultTimeoutSec     = 120
+	unifiSwitchResultPollIntervalMs = 250
+	unifiSwitchResultStateOk        = "ok"
 )
 
-// Don't need these for now, ansible has these defined in it already.
-// const (
-// 	red1Vlan  = 10
-// 	red2Vlan  = 20
-// 	red3Vlan  = 30
-// 	blue1Vlan = 40
-// 	blue2Vlan = 50
-// 	blue3Vlan = 60
-// )
+// Directories shared with the host helper. The arena writes requests; the helper writes results.
+var (
+	UnifiSwitchRequestDir = "/run/freezy-net/request"
+	UnifiSwitchResultDir  = "/run/freezy-net/result"
+)
 
 type UnifiSwitch struct {
-	address               string
-	port                  int
-	password              string
-	mutex                 sync.Mutex
-	configBackoffDuration time.Duration
-	configPauseDuration   time.Duration
-	Status                string
+	address            string
+	password           string
+	mutex              sync.Mutex
+	resultTimeout      time.Duration
+	resultPollInterval time.Duration
+	Status             string
+}
+
+// The request handed to the host helper. TeamNumbers always has six entries in station order (R1, R2, R3, B1,
+// B2, B3); an empty string means the station is empty.
+type unifiSwitchRequest struct {
+	Id          string    `json:"id"`
+	TeamNumbers [6]string `json:"team_numbers"`
+}
+
+// The helper's verdict on the request with the same Id.
+type unifiSwitchResult struct {
+	Id      string `json:"id"`
+	State   string `json:"state"`
+	Message string `json:"message"`
 }
 
 func NewUnifiSwitch(address, password string) *UnifiSwitch {
 	return &UnifiSwitch{
-		address:               address,
-		port:                  UnifiSwitchAPIPort,
-		password:              password,
-		configBackoffDuration: UnifiSwitchConfigBackoffDurationSec * time.Second,
-		configPauseDuration:   UnifiSwitchConfigPauseDurationSec * time.Second,
-		Status:                "UNKNOWN",
+		address:            address,
+		password:           password,
+		resultTimeout:      unifiSwitchResultTimeoutSec * time.Second,
+		resultPollInterval: unifiSwitchResultPollIntervalMs * time.Millisecond,
+		Status:             "UNKNOWN",
 	}
 }
 
-// Sets up wired networks for the given set of teams.
-// Helper function to run commands safely using os/exec and capture output on failure.
-func (sw *UnifiSwitch) runExecCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-
-	// Create pipes for stdout and stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
-	}
-
-	fmt.Printf("Executing command: %s\n", cmd.Args) // Log the command
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("command failed to start: %w", err)
-	}
-
-	// Read output in separate goroutines to prevent deadlocks
-	stdoutBytes, errStdout := io.ReadAll(stdout)
-	stderrBytes, errStderr := io.ReadAll(stderr)
-
-	if err := cmd.Wait(); err != nil {
-		// Log the error detail and the captured output
-		log.Printf("Command failed: %s\nError: %v\n", name, err)
-
-		// Check if reading output pipes had errors, log them as well
-		if errStdout != nil {
-			log.Printf("Error reading stdout: %v\n", errStdout)
-		} else if len(stdoutBytes) > 0 {
-			log.Printf("Captured STDOUT:\n%s\n", string(stdoutBytes))
-		}
-		if errStderr != nil {
-			log.Printf("Error reading stderr: %v\n", errStderr)
-		} else if len(stderrBytes) > 0 {
-			log.Printf("Captured STDERR:\n%s\n", string(stderrBytes))
-		}
-
-		// Return a comprehensive error message including standard output/error streams
-		return fmt.Errorf("command execution failed: %w. STDOUT: %s. STDERR: %s", err, string(stdoutBytes), string(stderrBytes))
-	}
-
-	// Optionally log successful output if needed (commented out by default)
-	// if len(stdoutBytes) > 0 {
-	//     log.Printf("Command STDOUT:\n%s\n", string(stdoutBytes))
-	// }
-	// if len(stderrBytes) > 0 {
-	//     log.Printf("Command STDERR:\n%s\n", string(stderrBytes))
-	// }
-
-	return nil
-}
-
+// Sets up wired networks for the given set of teams. Returns an error, and leaves Status as ERROR, unless the
+// host helper confirms that it applied this exact request.
 func (sw *UnifiSwitch) UnifiConfigureTeamEthernet(teams [6]*model.Team) error {
 	// Make sure multiple configurations aren't being set at the same time.
 	sw.mutex.Lock()
 	defer sw.mutex.Unlock()
 	sw.Status = "CONFIGURING"
 
-	// --- Step 1: Remove old team VLANs (cleaner command execution) ---
-	err := sw.runExecCommand("ansible-playbook", "create_vlans.yaml")
-	if err != nil {
-		sw.Status = "ERROR"
-		return err
-	}
-	time.Sleep(sw.configPauseDuration)
-
-	// --- Step 2: Create the new team VLANs (safe JSON and exec) ---
-
-	// Prepare data structure for JSON marshaling
-	type AnsibleVars struct {
-		// TeamNumbers will always contain 6 entries. An empty string indicates a null or empty position.
-		TeamNumbers [6]string `json:"team_numbers"`
-	}
-
-	var vars AnsibleVars
-
-	// Populate the fixed-size array, using an empty string for nil entries to maintain position.
-	hasTeams := false
+	request := unifiSwitchRequest{Id: strconv.FormatInt(time.Now().UnixNano(), 10)}
 	for i, team := range teams {
 		if team != nil {
-			vars.TeamNumbers[i] = fmt.Sprintf("%d", team.Id)
-			hasTeams = true
-		} else {
-			vars.TeamNumbers[i] = "" // Use empty string to represent an empty position.
+			request.TeamNumbers[i] = strconv.Itoa(team.Id)
 		}
 	}
 
-	if !hasTeams {
-		log.Println("No valid team IDs provided; skipping 'config_dhcp.yaml' playbook as all entries are empty.")
-		sw.Status = "ACTIVE"
-		return nil
-	}
-
-	// Safely marshal the Go struct into a JSON byte slice
-	jsonData, err := json.Marshal(vars)
-	if err != nil {
-		sw.Status = "ERROR"
-		return fmt.Errorf("failed to marshal JSON for ansible vars: %w", err)
-	}
-
-	// Pass the raw JSON string as a single argument for the -e flag
-	extraVarsArg := string(jsonData)
-
-	// Execute the command safely, passing each argument as a separate element in the list
-	err = sw.runExecCommand("ansible-playbook", "-e", extraVarsArg, "config_dhcp.yaml")
-	if err != nil {
+	if err := sw.writeRequest(request); err != nil {
 		sw.Status = "ERROR"
 		return err
 	}
 
-	// Give some time for the configuration to take before another one can be attempted.
-	time.Sleep(sw.configBackoffDuration)
+	result, err := sw.waitForResult(request.Id)
+	if err != nil {
+		sw.Status = "ERROR"
+		return err
+	}
+	if result.State != unifiSwitchResultStateOk {
+		sw.Status = "ERROR"
+		return fmt.Errorf("host network helper reported %q: %s", result.State, result.Message)
+	}
 
 	sw.Status = "ACTIVE"
 	return nil
+}
+
+// Writes the request where the host helper watches for it. The file is written under a temporary name and
+// renamed into place so that the helper never reads a partial request.
+func (sw *UnifiSwitch) writeRequest(request unifiSwitchRequest) error {
+	data, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("failed to encode host network request: %w", err)
+	}
+
+	tempFile, err := os.CreateTemp(UnifiSwitchRequestDir, ".teams-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create host network request in %s: %w", UnifiSwitchRequestDir, err)
+	}
+	tempPath := tempFile.Name()
+	_, writeErr := tempFile.Write(data)
+	closeErr := tempFile.Close()
+	if writeErr != nil || closeErr != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to write host network request: %v %v", writeErr, closeErr)
+	}
+	if err = os.Chmod(tempPath, 0644); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to set permissions on host network request: %w", err)
+	}
+	if err = os.Rename(tempPath, filepath.Join(UnifiSwitchRequestDir, unifiSwitchRequestFile)); err != nil {
+		os.Remove(tempPath)
+		return fmt.Errorf("failed to submit host network request: %w", err)
+	}
+	return nil
+}
+
+// Waits for the helper's result for the given request. Results for other requests (for example, one left over
+// from the previous match) are ignored.
+func (sw *UnifiSwitch) waitForResult(id string) (*unifiSwitchResult, error) {
+	resultPath := filepath.Join(UnifiSwitchResultDir, unifiSwitchResultFile)
+	deadline := time.Now().Add(sw.resultTimeout)
+	for {
+		if data, err := os.ReadFile(resultPath); err == nil {
+			var result unifiSwitchResult
+			if json.Unmarshal(data, &result) == nil && result.Id == id {
+				return &result, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf(
+				"host network helper did not answer within %v; check freezy-net.path and freezy-net.service on "+
+					"the field server",
+				sw.resultTimeout,
+			)
+		}
+		time.Sleep(sw.resultPollInterval)
+	}
 }
