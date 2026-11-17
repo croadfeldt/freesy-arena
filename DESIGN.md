@@ -33,7 +33,8 @@ Forking with upstream's permission lets these changes ship without round-trips t
 ### Networking — UniFi switch path
 
 - **`network/unifiswitch.go`** — UniFi switch driver as an alternative to upstream's Cisco-only `sccswitch.go`. Provisioned via SSH/REST against the UniFi controller.
-- **`deploy/host/ansible/host_setup.yaml`** — one-time Ansible setup of the field server: installs the host helper and per-match playbook, creates the six team VLAN connections, and loads the team VLAN filter. It replaced `create_vlans.yaml`, which assumed a different interface layout, and the unused `unifi_cycle_switch_ports.yaml`.
+- **`deploy/host/ansible/host_network.yaml`** — builds the field server's network interfaces from a fresh install: one interface with no address of its own, a macvlan on it carrying the FMS address, and the six team VLANs. Existing connections are checked, never rebuilt.
+- **`deploy/host/ansible/host_setup.yaml`** — one-time Ansible setup of the field server: installs the host helper and per-match playbook, and loads the team VLAN filter. It replaced `create_vlans.yaml`, which assumed a different interface layout, and the unused `unifi_cycle_switch_ports.yaml`.
 - **`deploy/host/freezy-field.nft`** — what a team VLAN may reach on the field server: the stock `DS-FMS` access list (driver station traffic to the FMS address, ping, DHCP). The arena's web pages are not reachable from a driver station. Tested by `deploy/host/test_freezy_firewall.sh`.
 - **Cisco switch architecture fully disabled** — `sccswitch.go` code paths are not exercised in fork builds; the build is UniFi-first.
 

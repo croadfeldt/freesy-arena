@@ -2,9 +2,15 @@
 # Host-specific values for the Freezy Arena team networks. This is the one place to change them.
 # On the field server, overrides go in /etc/freezy-net/vars.yaml (same keys); that file wins.
 
-# The network interface that carries the field VLANs. Only the one-time host setup uses it, to create
-# any team VLAN connection that does not exist yet.
+# The one network interface the field server uses. It carries the FMS network and the team VLANs and
+# never has an address of its own; host_network.yaml sets that up.
 freezy_field_interface: enp1s0
+
+# The field server's own address lives on a macvlan on top of that interface.
+freezy_fms_connection: cheesy_macvlan
+freezy_fms_prefix_length: 24
+freezy_fms_gateway: 10.0.100.1
+freezy_fms_dns: [10.0.100.1]
 
 # The account the arena's container runs as. It owns the request directory.
 freezy_arena_user: cheesy

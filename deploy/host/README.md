@@ -6,22 +6,39 @@ limits what a team VLAN can reach, and the playbook that installs them.
 
 ## Setting up the field server
 
-Run this as root on the field server, from a checkout of this repository, and again whenever the files
+Run these as root on the field server, from a checkout of this repository, and again whenever the files
 here change:
 
+    ansible-playbook -i localhost, -c local deploy/host/ansible/host_network.yaml
     podman build -t localhost/freezy-kea:latest deploy/kea
     ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
+
+### The network interfaces (`host_network.yaml`)
+
+The field server uses one network interface (`freezy_field_interface` in `ansible/vars.yaml`):
+
+| What | Connection | Address |
+|---|---|---|
+| the interface itself | whatever is on it | none: IPv4 and IPv6 are disabled |
+| the field server's own address | macvlan `cheesy_macvlan` on the interface | the FMS address, 10.0.100.5/24 |
+| team VLANs 10, 20, 30, 40, 50, 60 | `vlan10` to `vlan60` on the interface | none until a match assigns `10.TE.AM.4/24` |
+
+The playbook creates whatever is missing, so it builds this from a fresh install. What already exists
+is checked and never rebuilt: if the macvlan or a VLAN is not what `vars.yaml` describes, the playbook
+stops and says so, because rebuilding the connection that carries the FMS address would cut off the
+arena and anyone logged in. The one live change it makes is removing addresses from the interface
+itself, which leaves the macvlan and the VLANs up.
+
+### The helper, the filter and Kea (`host_setup.yaml`)
 
 Kea runs as a container, so the first command builds its image; nothing is installed on the host. The
 playbook checks the host first and changes nothing if a check fails: `nmcli`, `nft`, `podman`,
 `ansible-playbook` and `python3` must be installed, the Kea image must be built, the arena's account
-must exist, and the FMS address must be up. Then it:
+must exist, the FMS address must be up, and the six team VLAN connections must exist. Then it:
 
 1. installs the files listed below;
 2. loads the team VLAN filter and enables it at boot;
-3. creates any of the six team VLAN connections that do not exist yet, with no address. A connection
-   that already exists is left as it is, after checking it is the VLAN `ansible/vars.yaml` says it is;
-4. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
+3. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
 
 It installs no packages and does not touch the FMS address, other connections, or any other firewall on
 the host. Host-specific values (field interface, VLAN connection names, the arena's account, addresses)
