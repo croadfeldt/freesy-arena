@@ -1,0 +1,16 @@
+# Loads the team VLAN filter (freezy-field.nft) before the network comes up, so a team VLAN is never
+# reachable unfiltered. There is deliberately no stop action: stopping the unit leaves the rules loaded.
+[Unit]
+Description=Freezy Arena team VLAN filter
+Wants=network-pre.target
+Before=network-pre.target
+ConditionPathExists=/etc/freezy-net/freezy-field-vars.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -I /etc/freezy-net -f /usr/share/freezy-net/freezy-field.nft
+ExecReload=/usr/sbin/nft -I /etc/freezy-net -f /usr/share/freezy-net/freezy-field.nft
+
+[Install]
+WantedBy=multi-user.target
