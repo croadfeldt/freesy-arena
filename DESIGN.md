@@ -44,13 +44,13 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 ### Operational
 
-- **`configure_cheesy_sudo.yaml`** — installs a sudoers drop-in that lets the `cheesy` service user run the network/DHCP playbooks without password prompts (so they can be invoked from the running Cheesy Arena process when needed).
+- **No sudo rule for the arena user.** An earlier version let the `cheesy` user run `ansible-playbook` as root without a password, which amounts to root. The host network helper replaced it; the arena can now only submit six team numbers.
 
 ## Running as a rootless container
 
 - **`Containerfile`** builds a static binary and an image that carries `templates/`, `static/`, `schedules/` and `font/`. Everything the server writes (event database, backups, match logs, team avatars) is redirected into one volume at `/data`.
 - **`deploy/freezy-arena.container`** is a Quadlet unit that runs the image rootless under the field-server user, with host networking (the driver-station listener binds 10.0.100.5 and the server talks to the field VLANs directly).
-- **Not yet covered:** the UniFi/DHCP playbooks change the host's network and DHCP server as root, which a rootless container cannot do. How the container triggers them is part of the switch-type round below. Logos uploaded through the Setup menu land in `static/img` inside the container and do not survive an image rebuild.
+- **`deploy/host/`** is the root-owned host network helper. A rootless container cannot change the host's VLAN interfaces or DHCP server, so the arena hands the six team numbers to this helper through a spool directory and waits for its verdict. The step cannot be skipped: no answer, or a failed playbook, shows as a switch ERROR. See `deploy/host/README.md`. Logos uploaded through the Setup menu land in `static/img` inside the container and do not survive an image rebuild.
 
 ## Branch model
 
@@ -66,7 +66,7 @@ Forking with upstream's permission lets these changes ship without round-trips t
 ## Design choices
 
 - **Fork rather than upstream PR.** UniFi support and local DHCP are MN-specific operational needs; upstream serves the larger FRC community where Cisco + static IPs is the convention. Keeping these in a fork avoids putting upstream maintainers on the hook for hardware they don't have.
-- **Ansible for network provisioning, not Go.** Switch and DHCP configuration is delegated to Ansible playbooks invoked from the Go arena process. Easier to debug at-event (run the playbook by hand) and easier for the next operator to extend without recompiling.
+- **Ansible for network provisioning, not Go.** Switch and DHCP configuration is delegated to Ansible playbooks, run by the root-owned host helper when the arena asks. Easier to debug at-event (run the playbook by hand) and easier for the next operator to extend without recompiling.
 - **Keep upstream README authoritative for setup/operation.** Operators read the upstream README to install and use Cheesy Arena, and refer here only to understand what's different in this fork.
 
 ## Known limitations / future work

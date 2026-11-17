@@ -1,0 +1,137 @@
+#!/usr/bin/python3
+"""Root-owned host helper that applies the team networks for the match the arena has loaded.
+
+The arena runs as a rootless container and cannot change the host's VLAN interfaces or DHCP server. It
+writes the six team numbers to a request file; systemd starts this helper (freezy-net.path ->
+freezy-net.service); the helper validates the request, runs the per-match playbook as root, and writes
+a result file that the arena waits for.
+
+The request directory is writable by the arena's user, so nothing in it is trusted: the request is
+opened without following symlinks, size-limited, and accepted only if it is exactly an id plus six
+team numbers. The result directory is writable by root only.
+"""
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+SPOOL_DIR = os.environ.get("FREEZY_NET_SPOOL", "/run/freezy-net")
+PLAYBOOK = os.environ.get("FREEZY_NET_PLAYBOOK", "/usr/share/freezy-net/match_network.yaml")
+ANSIBLE_PLAYBOOK = os.environ.get("FREEZY_NET_ANSIBLE", "/usr/bin/ansible-playbook")
+TIMEOUT_SEC = int(os.environ.get("FREEZY_NET_TIMEOUT", "90"))
+
+REQUEST_PATH = os.path.join(SPOOL_DIR, "request", "teams.json")
+RESULT_DIR = os.path.join(SPOOL_DIR, "result")
+RESULT_PATH = os.path.join(RESULT_DIR, "status.json")
+
+MAX_REQUEST_BYTES = 4096
+MAX_MESSAGE_CHARS = 2000
+ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+TEAM_RE = re.compile(r"^[1-9][0-9]{0,4}$")
+
+
+class RequestError(Exception):
+    """The request file is missing, unsafe to read, or not a valid request."""
+
+
+def read_request():
+    """Returns (id, team_numbers) from the request file, or raises RequestError."""
+    try:
+        fd = os.open(REQUEST_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e:
+        raise RequestError(f"cannot open request: {e.strerror}")
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise RequestError("request is not a regular file")
+        data = os.read(fd, MAX_REQUEST_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(data) > MAX_REQUEST_BYTES:
+        raise RequestError("request is too large")
+
+    try:
+        request = json.loads(data)
+    except ValueError:
+        raise RequestError("request is not valid JSON")
+    if not isinstance(request, dict) or set(request) != {"id", "team_numbers"}:
+        raise RequestError("request must have exactly the keys id and team_numbers")
+
+    request_id = request["id"]
+    if not isinstance(request_id, str) or not ID_RE.match(request_id):
+        raise RequestError("request id is not valid")
+
+    teams = request["team_numbers"]
+    if not isinstance(teams, list) or len(teams) != 6:
+        raise RequestError("team_numbers must be a list of six entries", request_id)
+    for team in teams:
+        if not isinstance(team, str) or (team != "" and not TEAM_RE.match(team)):
+            raise RequestError("each team number must be blank or 1 to 5 digits", request_id)
+    return request_id, teams
+
+
+def write_result(request_id, state, message):
+    """Writes the result atomically, readable by the arena's container."""
+    result = {"id": request_id, "state": state, "message": message[-MAX_MESSAGE_CHARS:]}
+    fd, temp_path = tempfile.mkstemp(dir=RESULT_DIR, prefix=".status-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(result, f)
+    os.chmod(temp_path, 0o644)
+    os.replace(temp_path, RESULT_PATH)
+    # Let a confined container read the result. A no-op where SELinux is off or chcon is missing.
+    subprocess.run(
+        ["chcon", "-R", "-t", "container_file_t", RESULT_DIR],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+    )
+
+
+def apply(teams):
+    """Runs the per-match playbook. Returns (state, message)."""
+    command = [
+        ANSIBLE_PLAYBOOK, "-i", "localhost,", "-c", "local",
+        "-e", json.dumps({"team_numbers": teams}), PLAYBOOK,
+    ]
+    try:
+        completed = subprocess.run(
+            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        return "error", f"playbook did not finish within {TIMEOUT_SEC}s"
+    except OSError as e:
+        return "error", f"cannot run {ANSIBLE_PLAYBOOK}: {e.strerror}"
+    print(completed.stdout, end="")
+    if completed.returncode != 0:
+        return "error", f"playbook failed (rc={completed.returncode}): {completed.stdout.strip()}"
+    return "ok", ""
+
+
+def main():
+    # systemd does not queue a second trigger while this service is running, so keep going until the
+    # request on disk is the one that was just answered.
+    last_id = None
+    failed = False
+    while True:
+        try:
+            request_id, teams = read_request()
+        except RequestError as e:
+            print(f"rejected request: {e.args[0]}", file=sys.stderr)
+            rejected_id = e.args[1] if len(e.args) > 1 else None
+            if rejected_id is not None and rejected_id != last_id:
+                write_result(rejected_id, "error", f"request rejected: {e.args[0]}")
+            return 1
+        if request_id == last_id:
+            return 1 if failed else 0
+
+        print(f"request {request_id}: teams {teams}")
+        state, message = apply(teams)
+        print(f"request {request_id}: {state} {message}".rstrip())
+        write_result(request_id, state, message)
+        last_id = request_id
+        failed = state != "ok"
+
+
+if __name__ == "__main__":
+    sys.exit(main())
