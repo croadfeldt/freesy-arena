@@ -72,8 +72,9 @@ When running Cheesy Arena on a playing field with robots, set the IP address of 
 10.0.100.5. By a convention baked into the FRC Driver Station software, driver stations will broadcast their presence on
 the network to this hardcoded address so that the FMS does not need to discover them by some other method.
 
-When running Cheesy Arena without robots for testing or development, pass the `-dev` flag to bind driver station
-listeners to any local IP address.
+When running Cheesy Arena without robots for testing or development, pass the `-dev` flag to bind the web server and
+driver station listeners to any local IP address. Without it, in this fork, everything listens on 10.0.100.5 only, so
+browse to http://10.0.100.5:8080 rather than localhost.
 
 ## Under the hood
 

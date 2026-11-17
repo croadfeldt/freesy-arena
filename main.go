@@ -16,7 +16,7 @@ const httpPort = 8080
 
 // Main entry point for the application.
 func main() {
-	flag.BoolVar(&network.DevMode, "dev", false, "Bind driver station listeners to all IP addresses for development")
+	flag.BoolVar(&network.DevMode, "dev", false, "Bind the web and driver station listeners to all IP addresses for development")
 	flag.Parse()
 
 	arena, err := field.NewArena(eventDbPath)

@@ -354,10 +354,7 @@ func (dsConn *DriverStationConnection) sendControlPacket(arena *Arena, gameData 
 }
 
 func listenAddress(port int) string {
-	if network.DevMode {
-		return fmt.Sprintf(":%d", port)
-	}
-	return fmt.Sprintf("%s:%d", network.ServerIpAddress, port)
+	return network.ListenAddress(port)
 }
 
 // Listens for TCP connection requests to Cheesy Arena from driver stations.

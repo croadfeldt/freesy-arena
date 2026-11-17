@@ -43,8 +43,17 @@ type Switch struct {
 
 const ServerIpAddress = "10.0.100.5" // The DS will try to connect to this address only.
 
-// DevMode allows driver station listeners to bind to all local IP addresses.
+// DevMode allows the server's listeners to bind to all local IP addresses.
 var DevMode = false
+
+// ListenAddress returns the address a server listener should bind for the given port: the FMS address
+// only, or all local addresses in DevMode.
+func ListenAddress(port int) string {
+	if DevMode {
+		return fmt.Sprintf(":%d", port)
+	}
+	return fmt.Sprintf("%s:%d", ServerIpAddress, port)
+}
 
 func NewSwitch(address, password string) *Switch {
 	return &Switch{

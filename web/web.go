@@ -10,6 +10,7 @@ import (
 	"github.com/Team254/cheesy-arena/field"
 	"github.com/Team254/cheesy-arena/game"
 	"github.com/Team254/cheesy-arena/model"
+	"github.com/Team254/cheesy-arena/network"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -89,11 +90,17 @@ func NewWeb(arena *field.Arena) *Web {
 func (web *Web) ServeWebInterface(port int) {
 	http.Handle("/static/", http.StripPrefix("/static/", addNoCacheHeader(http.FileServer(http.Dir("static/")))))
 	http.Handle("/", web.newHandler())
-	log.Printf("Serving HTTP requests on port %d", port)
+	bindAddress := network.ListenAddress(port)
+	log.Printf("Serving HTTP requests on %s", bindAddress)
 
 	// Start Server
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
-		log.Printf("HTTP server error: %v", err)
+	if err := http.ListenAndServe(bindAddress, nil); err != nil {
+		log.Fatalf(
+			"HTTP server error: %v. Use the -dev flag to unrestrict server IP address for development, or change "+
+				"IP address to %s.",
+			err,
+			network.ServerIpAddress,
+		)
 	}
 }
 

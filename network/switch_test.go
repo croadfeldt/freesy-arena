@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+func TestListenAddress(t *testing.T) {
+	defer func() { DevMode = false }()
+
+	// Listeners bind the FMS address only, so nothing is exposed on the team VLANs.
+	DevMode = false
+	assert.Equal(t, "10.0.100.5:8080", ListenAddress(8080))
+	assert.Equal(t, "10.0.100.5:1750", ListenAddress(1750))
+
+	DevMode = true
+	assert.Equal(t, ":8080", ListenAddress(8080))
+}
+
 func TestConfigureSwitch(t *testing.T) {
 	sw := NewSwitch("127.0.0.1", "password")
 	assert.Equal(t, "UNKNOWN", sw.Status)
