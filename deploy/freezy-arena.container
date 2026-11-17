@@ -1,0 +1,27 @@
+# Rootless Quadlet unit for Freezy Arena.
+#
+# Install as the user that runs the field server:
+#   podman build -t localhost/freezy-arena:latest .
+#   mkdir -p ~/.config/containers/systemd
+#   cp deploy/freezy-arena.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start freezy-arena
+#
+# Host networking is required: the server binds the driver-station listener to 10.0.100.5 and talks
+# to robots, the access point, the switch and the PLC directly on the field VLANs.
+
+[Unit]
+Description=Freezy Arena (rootless container)
+
+[Container]
+ContainerName=freezy-arena
+Image=localhost/freezy-arena:latest
+Network=host
+Volume=freezy-arena-data:/data
+Timezone=local
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

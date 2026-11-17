@@ -1,32 +1,33 @@
-# Use a base image with Go installed
-FROM golang:latest AS builder
+# Container image for Freezy Arena.
+#
+# Build:  podman build -t localhost/freezy-arena:latest .
+# Run:    see deploy/freezy-arena.container (rootless Quadlet unit).
+#
+# The server reads templates/, static/, schedules/ and font/ from its working directory and writes its
+# state next to them. Everything it writes is redirected into /data by the symlinks below, so one
+# volume mounted at /data holds the event database, backups, match logs and team avatars.
 
-# Set the working directory inside the container
-WORKDIR /app
-
-# Copy go module files
+FROM docker.io/library/golang:1.26 AS builder
+WORKDIR /src
 COPY go.mod go.sum ./
-
-# Download Go dependencies
 RUN go mod download
-
-# Copy the source code
 COPY . .
+# Static binary with embedded timezone data, so the runtime image needs neither glibc parity nor tzdata.
+RUN CGO_ENABLED=0 go build -tags timetzdata -o /out/cheesy-arena .
 
-# Build the Go application
-RUN go build -o main .
-
-# Use a minimal base image for the final container
-FROM alpine:latest  
-
-# Set the working directory
-WORKDIR /root/
-
-# Copy the binary from the builder stage
-COPY --from=builder /app/main .
-
-# Expose the port the app listens on
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+WORKDIR /app
+COPY --from=builder /out/cheesy-arena ./
+COPY templates ./templates
+COPY static ./static
+COPY schedules ./schedules
+COPY font ./font
+RUN mkdir -p /data/db /data/logs \
+ && mv static/img/avatars /data/avatars \
+ && ln -s /data/avatars static/img/avatars \
+ && ln -s /data/logs static/logs \
+ && ln -s /data/db db \
+ && ln -s /data/event.db event.db
+VOLUME /data
 EXPOSE 8080
-
-# Command to run when the container starts
-CMD ["./main"]
+ENTRYPOINT ["/app/cheesy-arena"]

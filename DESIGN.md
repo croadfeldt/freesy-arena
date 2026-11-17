@@ -46,6 +46,12 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 - **`configure_cheesy_sudo.yaml`** — installs a sudoers drop-in that lets the `cheesy` service user run the network/DHCP playbooks without password prompts (so they can be invoked from the running Cheesy Arena process when needed).
 
+## Running as a rootless container
+
+- **`Containerfile`** builds a static binary and an image that carries `templates/`, `static/`, `schedules/` and `font/`. Everything the server writes (event database, backups, match logs, team avatars) is redirected into one volume at `/data`.
+- **`deploy/freezy-arena.container`** is a Quadlet unit that runs the image rootless under the field-server user, with host networking (the driver-station listener binds 10.0.100.5 and the server talks to the field VLANs directly).
+- **Not yet covered:** the UniFi/DHCP playbooks change the host's network and DHCP server as root, which a rootless container cannot do. How the container triggers them is part of the switch-type round below. Logos uploaded through the Setup menu land in `static/img` inside the container and do not survive an image rebuild.
+
 ## Branch model
 
 - `Freezy-Arena-2026` — **current fork branch**: `Freezy-Arena/freezy-arena` `main` (2026 game) with the fork-specific commits replayed on top. Created 2026-11-16; needs a field-server test of the UniFi/DHCP path before it replaces `Freezy-Arena-2025` at events.
