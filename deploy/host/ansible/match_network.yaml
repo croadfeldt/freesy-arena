@@ -75,7 +75,8 @@
         ipv4.method {{ 'manual' if item.item.prefix else 'disabled' }}
         ipv4.addresses "{{ (item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24') if item.item.prefix else '' }}"
         ipv4.gateway "" ipv4.never-default yes
-      when: item.stdout_lines != wanted
+      # nmcli prints an empty second line for a connection with no address; Ansible drops it.
+      when: (item.stdout_lines + [''])[:2] != wanted
       vars:
         wanted: >-
           {{ ['manual', item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24'] if item.item.prefix
@@ -113,6 +114,20 @@
       ansible.builtin.systemd:
         name: "{{ freezy_kea_service }}"
         state: "{{ 'restarted' if freezy_kea_written.changed else 'started' }}"
+      tags: host
+
+    # Kea can be running without serving, for example if another DHCP server on the host already holds
+    # port 67. Only a socket on each team gateway address proves it is answering there.
+    - name: Check Kea is listening on every populated team VLAN
+      ansible.builtin.command: ss -H -uln src {{ item.prefix }}.{{ freezy_gateway_host }}:67
+      register: freezy_listening
+      changed_when: false
+      until: freezy_listening.stdout | length > 0
+      retries: 10
+      delay: 1
+      loop: "{{ freezy_scopes }}"
+      loop_control:
+        label: "{{ item.station }}"
       tags: host
 
     - name: Report

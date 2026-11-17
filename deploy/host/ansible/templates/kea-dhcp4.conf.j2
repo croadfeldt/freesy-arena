@@ -4,7 +4,8 @@
   "Dhcp4": {
     "interfaces-config": {
       "interfaces": {{ freezy_scopes | map(attribute='connection') | list | to_json }},
-      "dhcp-socket-type": "raw"
+      "dhcp-socket-type": "raw",
+      "service-sockets-require-all": true
     },
     "lease-database": {
       "type": "memfile",
