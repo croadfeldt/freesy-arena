@@ -25,12 +25,28 @@ root.
 | `freezy-net-helper` | `/usr/libexec/freezy-net-helper` |
 | `freezy-net.path`, `freezy-net.service` | `/usr/lib/systemd/system/` |
 | `freezy-net.tmpfiles.conf` | `/usr/lib/tmpfiles.d/freezy-net.conf` |
-| the per-match playbook | `/usr/share/freezy-net/match_network.yaml` |
+| `ansible/match_network.yaml`, `ansible/vars.yaml`, `ansible/templates/` | `/usr/share/freezy-net/` |
+| host overrides for `vars.yaml` (optional) | `/etc/freezy-net/vars.yaml` |
 
 All of it lives under `/usr` and all state under `/run`, so the same layout works on an image mode
 host. Enable it with `systemctl enable --now freezy-net.path`.
 
 The arena's container mounts the two spool directories; see `deploy/freezy-arena.container`.
+
+## What the per-match playbook does
+
+`ansible/match_network.yaml` takes the six team numbers and, for each station:
+
+- puts `10.TE.AM.4/24` on that station's VLAN connection, or removes the address if the station is empty;
+- gives Kea one DHCP scope for the team (`10.TE.AM.20` to `.199`, router `.4`), using the team number as
+  the subnet id so a team's leases stay valid when it moves stations.
+
+Kea checks the new configuration before it replaces the live file, so a bad one fails the run and leaves
+the previous match's DHCP serving. The playbook installs nothing, refuses to run if the FMS address is
+missing, and touches no connection other than the six team VLANs. Host-specific values (VLAN connection
+names, address layout) are in `ansible/vars.yaml`.
+
+It needs `ansible-core`, `kea` and NetworkManager on the host, and the six VLAN connections to exist.
 
 ## Troubleshooting
 

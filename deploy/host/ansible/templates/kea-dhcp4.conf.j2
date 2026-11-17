@@ -1,0 +1,36 @@
+{#- Kea DHCPv4 configuration for the team VLANs of the match currently loaded. Rendered by
+    match_network.yaml; `freezy_scopes` holds one entry per populated station. -#}
+{
+  "Dhcp4": {
+    "interfaces-config": {
+      "interfaces": {{ freezy_scopes | map(attribute='connection') | list | to_json }},
+      "dhcp-socket-type": "raw"
+    },
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "lfc-interval": 3600
+    },
+    "authoritative": true,
+    "valid-lifetime": {{ freezy_dhcp_lease_seconds }},
+    "subnet4": [
+{% for scope in freezy_scopes %}
+      {
+        "id": {{ scope.team }},
+        "subnet": "{{ scope.prefix }}.0/24",
+        "interface": "{{ scope.connection }}",
+        "user-context": { "station": "{{ scope.station }}", "team": {{ scope.team }} },
+        "pools": [ { "pool": "{{ scope.prefix }}.{{ freezy_dhcp_first_host }} - {{ scope.prefix }}.{{ freezy_dhcp_last_host }}" } ],
+        "option-data": [ { "name": "routers", "data": "{{ scope.prefix }}.{{ freezy_gateway_host }}" } ]
+      }{{ "," if not loop.last }}
+{% endfor %}
+    ],
+    "loggers": [
+      {
+        "name": "kea-dhcp4",
+        "output-options": [ { "output": "stdout" } ],
+        "severity": "INFO"
+      }
+    ]
+  }
+}
