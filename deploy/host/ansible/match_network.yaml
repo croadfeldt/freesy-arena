@@ -1,0 +1,118 @@
+---
+# Per-match team networks for Freezy Arena. Run as root by the host network helper every time the arena
+# loads a match (see ../README.md). By hand:
+#
+#   ansible-playbook -i localhost, -c local match_network.yaml \
+#     -e '{"team_numbers": ["254", "", "1114", "8", "", "10101"]}'
+#
+# For each station it puts 10.TE.AM.4/24 on that station's VLAN (or removes the address if the station
+# is empty), then gives Kea one DHCP scope per populated station. It installs nothing and never touches
+# the FMS address or any connection other than the six team VLANs.
+- name: Configure the team networks for the loaded match
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  tasks:
+    - name: Load host overrides, if any
+      ansible.builtin.include_vars:
+        file: /etc/freezy-net/vars.yaml
+      when: "'/etc/freezy-net/vars.yaml' is file"
+
+    - name: Check the request
+      ansible.builtin.assert:
+        that:
+          - team_numbers is defined
+          - team_numbers | length == 6
+          - freezy_team_vlans | length == 6
+          - team_numbers | map('string') | reject('equalto', '') | reject('match', '^[1-9][0-9]{0,4}$') | list | length == 0
+          - team_numbers | map('string') | reject('equalto', '') | map('int') | select('gt', 25599) | list | length == 0
+          - (team_numbers | map('string') | reject('equalto', '') | list | unique | length)
+            == (team_numbers | map('string') | reject('equalto', '') | list | length)
+        fail_msg: >-
+          team_numbers must be six entries, each blank or a team number from 1 to 25599, with no team
+          listed twice.
+
+    # One entry per station. `prefix` is 10.TE.AM for the team, or empty for an empty station.
+    - name: Work out each station's network
+      ansible.builtin.set_fact:
+        freezy_stations: >-
+          {{ freezy_stations | default([]) + [ item.0 | combine({
+               'team': (item.1 | string),
+               'prefix': ('10.%d.%d' | format((item.1 | int) // 100, (item.1 | int) % 100))
+                         if (item.1 | string) != '' else '',
+             }) ] }}
+      loop: "{{ freezy_team_vlans | zip(team_numbers) | list }}"
+      loop_control:
+        label: "{{ item.0.station }}"
+
+    - name: Keep the populated stations for DHCP
+      ansible.builtin.set_fact:
+        freezy_scopes: "{{ freezy_stations | rejectattr('prefix', 'equalto', '') | list }}"
+
+    - name: Refuse to run if the FMS address is not up
+      ansible.builtin.command: ip -4 -o addr show
+      register: freezy_addresses
+      changed_when: false
+      failed_when: (' ' ~ freezy_fms_address ~ '/') not in freezy_addresses.stdout
+      tags: host
+
+    - name: Read each team VLAN's current address
+      ansible.builtin.command: nmcli -g ipv4.method,ipv4.addresses connection show {{ item.connection }}
+      register: freezy_current
+      changed_when: false
+      loop: "{{ freezy_stations }}"
+      loop_control:
+        label: "{{ item.station }}"
+      tags: host
+
+    # `wanted` is what nmcli prints for the desired state: "manual" + the address, or "disabled" + nothing.
+    - name: Set or clear each team VLAN's address
+      ansible.builtin.command: >-
+        nmcli connection modify {{ item.item.connection }}
+        ipv4.method {{ 'manual' if item.item.prefix else 'disabled' }}
+        ipv4.addresses "{{ (item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24') if item.item.prefix else '' }}"
+        ipv4.gateway "" ipv4.never-default yes
+      when: item.stdout_lines != wanted
+      vars:
+        wanted: >-
+          {{ ['manual', item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24'] if item.item.prefix
+             else ['disabled', ''] }}
+      register: freezy_modified
+      loop: "{{ freezy_current.results }}"
+      loop_control:
+        label: "{{ item.item.station }}"
+      tags: host
+
+    - name: Apply the changed addresses
+      ansible.builtin.command: nmcli connection up {{ item.item.item.connection }}
+      when: item.changed
+      loop: "{{ freezy_modified.results }}"
+      loop_control:
+        label: "{{ item.item.item.station }}"
+      tags: host
+
+    # Kea checks the file before it replaces the live one, so a bad config fails this run and leaves
+    # the previous match's DHCP serving.
+    - name: Write the Kea configuration for this match
+      ansible.builtin.template:
+        src: templates/kea-dhcp4.conf.j2
+        dest: "{{ freezy_kea_config }}"
+        owner: root
+        group: kea
+        mode: "0640"
+        validate: kea-dhcp4 -t %s
+      register: freezy_kea_written
+
+    - name: Load the new configuration into Kea
+      ansible.builtin.systemd:
+        name: "{{ freezy_kea_service }}"
+        state: "{{ 'restarted' if freezy_kea_written.changed else 'started' }}"
+      tags: host
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {% for s in freezy_stations %}{{ s.station }}={{ (s.team ~ ' ' ~ s.prefix ~ '.0/24') if s.prefix else 'empty' }}{{ '; ' if not loop.last }}{% endfor %}

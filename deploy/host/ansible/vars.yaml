@@ -1,0 +1,26 @@
+---
+# Host-specific values for the Freezy Arena team networks. This is the one place to change them.
+# On the field server, overrides go in /etc/freezy-net/vars.yaml (same keys); that file wins.
+
+# The six team VLANs, in the arena's station order. `connection` is the NetworkManager connection (and
+# interface) that carries the VLAN on the field server; the one-time host setup creates them.
+freezy_team_vlans:
+  - { station: red1,  vlan: 10, connection: vlan10 }
+  - { station: red2,  vlan: 20, connection: vlan20 }
+  - { station: red3,  vlan: 30, connection: vlan30 }
+  - { station: blue1, vlan: 40, connection: vlan40 }
+  - { station: blue2, vlan: 50, connection: vlan50 }
+  - { station: blue3, vlan: 60, connection: vlan60 }
+
+# Team network layout: 10.TE.AM.0/24, the field server at .4, DHCP for driver stations from .20 to .199
+# (the same layout the stock Cisco configuration uses).
+freezy_gateway_host: 4
+freezy_dhcp_first_host: 20
+freezy_dhcp_last_host: 199
+freezy_dhcp_lease_seconds: 3600
+
+# The FMS address. The per-match step never changes it; it only refuses to run if it is missing.
+freezy_fms_address: 10.0.100.5
+
+freezy_kea_config: /etc/kea/kea-dhcp4.conf
+freezy_kea_service: kea-dhcp4.service

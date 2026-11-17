@@ -39,8 +39,7 @@ Forking with upstream's permission lets these changes ship without round-trips t
 
 ### Networking — local DHCP
 
-- **`config_dhcp.yaml`** — Ansible playbook to configure a local DHCP server on the FMS host so team driver-station laptops get addresses without the upstream's static-IP convention.
-- **Filter plugins** under `filter_plugins/` handle null/empty team-number values without erroring (frequent in early-event scheduling when not all teams have arrived).
+- **`deploy/host/ansible/match_network.yaml`** — the per-match playbook. For each station it sets `10.TE.AM.4/24` on the station's VLAN and gives Kea a DHCP scope for the team; empty stations get neither. It replaced `config_dhcp.yaml` (ISC dhcpd, end-of-life upstream) on 2026-11-17. Host-specific values live in `deploy/host/ansible/vars.yaml`.
 
 ### Operational
 
