@@ -29,12 +29,17 @@
 
     - name: Check the programs this setup relies on are installed
       ansible.builtin.shell: |
-        for c in nmcli nft kea-dhcp4 ansible-playbook python3; do
+        for c in nmcli nft podman ansible-playbook python3; do
           command -v "$c" >/dev/null || echo "$c"
         done
       register: freezy_missing
       changed_when: false
       failed_when: freezy_missing.stdout_lines | length > 0
+      tags: host
+
+    - name: Check the Kea image has been built
+      ansible.builtin.command: podman image exists {{ freezy_kea_image }}
+      changed_when: false
       tags: host
 
     - name: Check the arena's account exists
@@ -89,7 +94,10 @@
         - "{{ freezy_share }}"
         - "{{ freezy_share }}/templates"
         - /etc/freezy-net
-        - /usr/lib/systemd/system/kea-dhcp4.service.d
+        - /etc/freezy-net/kea
+        - /var/lib/freezy-net
+        - /var/lib/freezy-net/kea
+        - /usr/share/containers/systemd
       tags: files
 
     - name: Install the helper, the playbooks and the units
@@ -104,7 +112,7 @@
         - { src: freezy-net.path, dest: /usr/lib/systemd/system/freezy-net.path }
         - { src: freezy-net.service, dest: /usr/lib/systemd/system/freezy-net.service }
         - { src: freezy-firewall.service, dest: /usr/lib/systemd/system/freezy-firewall.service }
-        - { src: kea-dhcp4-freezy.conf, dest: /usr/lib/systemd/system/kea-dhcp4.service.d/freezy.conf }
+        - { src: freezy-kea.container, dest: /usr/share/containers/systemd/freezy-kea.container }
         - { src: freezy-field.nft, dest: "{{ freezy_share }}/freezy-field.nft" }
         - { src: ansible/match_network.yaml, dest: "{{ freezy_share }}/match_network.yaml" }
         - { src: ansible/vars.yaml, dest: "{{ freezy_share }}/vars.yaml" }
@@ -182,10 +190,9 @@
         state: started
       tags: host
 
-    # Kea is only enabled here. It starts serving when the arena loads the first match, and comes back
-    # with that match's configuration after a reboot.
-    - name: Start Kea at every boot
-      ansible.builtin.systemd:
-        name: "{{ freezy_kea_service }}"
-        enabled: true
+    # Nothing to enable for Kea: systemd builds freezy-kea.service from the installed container file and
+    # starts it at boot. It first runs when the arena loads a match and the configuration exists.
+    - name: Check systemd has picked up the Kea container
+      ansible.builtin.command: systemctl cat {{ freezy_kea_service }}
+      changed_when: false
       tags: host

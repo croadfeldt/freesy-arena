@@ -1,0 +1,30 @@
+# Kea DHCPv4 for the team VLANs, as a root-owned container (Quadlet; systemd generates
+# freezy-kea.service from this). It uses the host's network because it answers driver stations
+# directly on the team VLAN interfaces.
+#
+# The per-match playbook writes the configuration and restarts this service. Until the arena has
+# loaded its first match there is no configuration and the service does not start.
+[Unit]
+Description=Kea DHCPv4 for the Freezy Arena team VLANs
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/freezy-net/kea/kea-dhcp4.conf
+# Keep retrying: after a reboot the team VLAN interfaces may not be up the first time Kea starts.
+StartLimitIntervalSec=0
+
+[Container]
+ContainerName=freezy-kea
+Image=localhost/freezy-kea:latest
+Network=host
+AddCapability=NET_RAW
+AddCapability=NET_BIND_SERVICE
+# The directory, not the file: the playbook replaces the file, and a file mount would keep the old one.
+Volume=/etc/freezy-net/kea:/etc/kea:ro,z
+Volume=/var/lib/freezy-net/kea:/var/lib/kea:Z
+
+[Service]
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

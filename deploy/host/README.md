@@ -6,20 +6,22 @@ limits what a team VLAN can reach, and the playbook that installs them.
 
 ## Setting up the field server
 
-Run this once as root on the field server, from a checkout of this repository, and again whenever the
-files here change:
+Run this as root on the field server, from a checkout of this repository, and again whenever the files
+here change:
 
+    podman build -t localhost/freezy-kea:latest deploy/kea
     ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
 
-It checks the host first and changes nothing if a check fails: `nmcli`, `nft`, `kea-dhcp4`,
-`ansible-playbook` and `python3` must be installed, the arena's account must exist, and the FMS address
-must be up. Then it:
+Kea runs as a container, so the first command builds its image; nothing is installed on the host. The
+playbook checks the host first and changes nothing if a check fails: `nmcli`, `nft`, `podman`,
+`ansible-playbook` and `python3` must be installed, the Kea image must be built, the arena's account
+must exist, and the FMS address must be up. Then it:
 
 1. installs the files listed below;
 2. loads the team VLAN filter and enables it at boot;
 3. creates any of the six team VLAN connections that do not exist yet, with no address. A connection
    that already exists is left as it is, after checking it is the VLAN `ansible/vars.yaml` says it is;
-4. enables the request watcher (`freezy-net.path`) and Kea.
+4. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
 
 It installs no packages and does not touch the FMS address, other connections, or any other firewall on
 the host. Host-specific values (field interface, VLAN connection names, the arena's account, addresses)
@@ -50,11 +52,14 @@ root.
 | `ansible/match_network.yaml`, `ansible/vars.yaml`, `ansible/templates/kea-dhcp4.conf.j2` | `/usr/share/freezy-net/` |
 | `freezy-field.nft` | `/usr/share/freezy-net/freezy-field.nft` |
 | `freezy-firewall.service` | `/usr/lib/systemd/system/` |
-| `kea-dhcp4-freezy.conf` | `/usr/lib/systemd/system/kea-dhcp4.service.d/freezy.conf` |
+| `freezy-kea.container` | `/usr/share/containers/systemd/freezy-kea.container` |
+| Kea configuration, written per match | `/etc/freezy-net/kea/kea-dhcp4.conf` |
+| Kea leases | `/var/lib/freezy-net/kea/` |
 | filter variables, written by the setup | `/etc/freezy-net/freezy-field-vars.nft` |
 | host overrides for `vars.yaml` (optional) | `/etc/freezy-net/vars.yaml` |
 
-The programs and units live under `/usr`, host-specific values under `/etc`, and state under `/run`, so
+The programs and units live under `/usr`, host-specific values under `/etc`, and state under `/run` and
+`/var`, so
 the same layout works on an image mode host.
 
 The arena's container mounts the two spool directories; see `deploy/freezy-arena.container`.
@@ -67,12 +72,16 @@ The arena's container mounts the two spool directories; see `deploy/freezy-arena
 - gives Kea one DHCP scope for the team (`10.TE.AM.20` to `.199`, router `.4`), using the team number as
   the subnet id so a team's leases stay valid when it moves stations.
 
-Kea checks the new configuration before it replaces the live file, so a bad one fails the run and leaves
-the previous match's DHCP serving. The playbook installs nothing, refuses to run if the FMS address is
+Kea runs as a root-owned container on the host's network (`freezy-kea.service`, generated from
+`freezy-kea.container`), because it answers driver stations directly on the team VLAN interfaces. The
+playbook has Kea, from the same image, check the new configuration before it replaces the live file, so
+a bad one fails the run and leaves the previous match's DHCP serving. The service first starts when the
+arena loads a match, and comes back with the last match's configuration after a reboot. The playbook installs nothing, refuses to run if the FMS address is
 missing, and touches no connection other than the six team VLANs. Host-specific values (VLAN connection
 names, address layout) are in `ansible/vars.yaml`.
 
-It needs `ansible-core`, `kea` and NetworkManager on the host, and the six VLAN connections to exist.
+It needs `ansible-core`, `podman` and NetworkManager on the host, the Kea image, and the six VLAN
+connections to exist.
 
 ## What a team VLAN can reach
 
@@ -95,6 +104,7 @@ with a count of dropped packets.
 - Switch status stuck on ERROR with "did not answer": `systemctl status freezy-net.path
   freezy-net.service`.
 - What the playbook did: `journalctl -u freezy-net.service`.
+- DHCP: `systemctl status freezy-kea.service`, `journalctl -u freezy-kea.service`.
 - The last request and result: `cat /run/freezy-net/request/teams.json /run/freezy-net/result/status.json`.
 
 ## Tests
