@@ -40,6 +40,7 @@ Forking with upstream's permission lets these changes ship without round-trips t
 ### Networking — local DHCP
 
 - **`deploy/host/ansible/match_network.yaml`** — the per-match playbook. For each station it sets `10.TE.AM.4/24` on the station's VLAN and gives Kea a DHCP scope for the team; empty stations get neither. It replaced `config_dhcp.yaml` (ISC dhcpd, end-of-life upstream) on 2026-11-17. Host-specific values live in `deploy/host/ansible/vars.yaml`.
+- **`deploy/kea/Containerfile`, `deploy/host/freezy-kea.container`** — Kea runs as a root-owned container on the host's network rather than a host package, so the field server needs nothing installed beyond podman and Ansible. The per-match playbook checks each new configuration with the same image before replacing the live file.
 
 ### Operational
 

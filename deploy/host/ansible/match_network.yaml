@@ -94,16 +94,19 @@
         label: "{{ item.item.item.station }}"
       tags: host
 
-    # Kea checks the file before it replaces the live one, so a bad config fails this run and leaves
-    # the previous match's DHCP serving.
+    # Kea (from the same image the service runs) checks the file before it replaces the live one, so a
+    # bad config fails this run and leaves the previous match's DHCP serving.
     - name: Write the Kea configuration for this match
       ansible.builtin.template:
         src: templates/kea-dhcp4.conf.j2
         dest: "{{ freezy_kea_config }}"
         owner: root
-        group: kea
-        mode: "0640"
-        validate: kea-dhcp4 -t %s
+        group: root
+        mode: "0644"
+        validate: >-
+          podman run --rm --network host --security-opt label=disable
+          -v %s:/tmp/kea-dhcp4.conf:ro --entrypoint /usr/sbin/kea-dhcp4
+          {{ freezy_kea_image }} -t /tmp/kea-dhcp4.conf
       register: freezy_kea_written
 
     - name: Load the new configuration into Kea

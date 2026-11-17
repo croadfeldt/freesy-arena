@@ -1,0 +1,9 @@
+# Kea DHCPv4 for the team VLANs. Build it on the field server as root:
+#
+#   podman build -t localhost/freezy-kea:latest deploy/kea
+#
+# The configuration and the lease file are mounted in by deploy/host/freezy-kea.container; the
+# per-match playbook writes the configuration.
+FROM registry.fedoraproject.org/fedora:45
+RUN dnf -y install kea && dnf clean all && rm -rf /var/cache/dnf
+ENTRYPOINT ["/usr/sbin/kea-dhcp4", "-c", "/etc/kea/kea-dhcp4.conf"]

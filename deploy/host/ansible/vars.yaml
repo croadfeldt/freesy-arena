@@ -31,5 +31,8 @@ freezy_fms_address: 10.0.100.5
 # The FMS network. Team VLANs may ping it (access point, switch); nothing else there is reachable.
 freezy_fms_network: 10.0.100.0/24
 
-freezy_kea_config: /etc/kea/kea-dhcp4.conf
-freezy_kea_service: kea-dhcp4.service
+# Kea runs as a container (deploy/host/freezy-kea.container). The per-match step writes its
+# configuration here, checks it with the same image, and restarts the service.
+freezy_kea_config: /etc/freezy-net/kea/kea-dhcp4.conf
+freezy_kea_service: freezy-kea.service
+freezy_kea_image: localhost/freezy-kea:latest
