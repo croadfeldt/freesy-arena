@@ -1,0 +1,11 @@
+#!/bin/sh
+# Container entrypoint for Freezy Arena.
+#
+# static/img holds both the images shipped in the repo and the logos and team avatars added at an event.
+# It lives in the /data volume so the event's files survive an image rebuild. Refresh the shipped
+# images from the image's own copy on every start, so they still update with the image; files that
+# exist only in the volume (uploads, downloaded avatars) are left alone.
+set -e
+mkdir -p /data/img /data/db /data/logs
+cp -a /app/static/img.dist/. /data/img/
+exec /app/cheesy-arena "$@"

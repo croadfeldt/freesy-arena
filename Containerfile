@@ -5,7 +5,7 @@
 #
 # The server reads templates/, static/, schedules/ and font/ from its working directory and writes its
 # state next to them. Everything it writes is redirected into /data by the symlinks below, so one
-# volume mounted at /data holds the event database, backups, match logs and team avatars.
+# volume mounted at /data holds the event database, backups, match logs, uploaded logos and team avatars.
 
 FROM docker.io/library/golang:1.26 AS builder
 WORKDIR /src
@@ -22,12 +22,13 @@ COPY templates ./templates
 COPY static ./static
 COPY schedules ./schedules
 COPY font ./font
-RUN mkdir -p /data/db /data/logs \
- && mv static/img/avatars /data/avatars \
- && ln -s /data/avatars static/img/avatars \
+COPY deploy/container-entrypoint.sh /app/entrypoint.sh
+# static/img moves into the volume (see the entrypoint); the image keeps its copy as img.dist.
+RUN mv static/img static/img.dist \
+ && ln -s /data/img static/img \
  && ln -s /data/logs static/logs \
  && ln -s /data/db db \
  && ln -s /data/event.db event.db
 VOLUME /data
 EXPOSE 8080
-ENTRYPOINT ["/app/cheesy-arena"]
+ENTRYPOINT ["/app/entrypoint.sh"]
