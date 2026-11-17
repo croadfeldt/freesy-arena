@@ -10,24 +10,30 @@ Run these as root on the field server, from a checkout of this repository, and a
 here change:
 
     ansible-playbook -i localhost, -c local deploy/host/ansible/host_network.yaml
+    ansible-playbook -i localhost, -c local deploy/host/ansible/jump_vms.yaml
     podman build -t localhost/freezy-kea:latest deploy/kea
     ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
 
 ### The network interfaces (`host_network.yaml`)
 
-The field server uses one network interface (`freezy_field_interface` in `ansible/vars.yaml`):
-
-| What | Connection | Address |
-|---|---|---|
-| the interface itself | whatever is on it | none: IPv4 and IPv6 are disabled |
-| the field server's own address | macvlan `cheesy_macvlan` on the interface | the FMS address, 10.0.100.5/24 |
-| team VLANs 10, 20, 30, 40, 50, 60 | `vlan10` to `vlan60` on the interface | none until a match assigns `10.TE.AM.4/24` |
+`NETWORK.md` has the full map. The field server uses one network interface (`freezy_field_interface`
+in `ansible/vars.yaml`), which gets no address of its own. On top of it the playbook puts the venue,
+transit and admin VLANs (999, 998, 100) with no address, a macvlan on the admin VLAN carrying the FMS
+address, and the six team VLANs with no address until a match assigns one.
 
 The playbook creates whatever is missing, so it builds this from a fresh install. What already exists
 is checked and never rebuilt: if the macvlan or a VLAN is not what `vars.yaml` describes, the playbook
 stops and says so, because rebuilding the connection that carries the FMS address would cut off the
 arena and anyone logged in. The one live change it makes is removing addresses from the interface
 itself, which leaves the macvlan and the VLANs up.
+
+### The jump virtual machines (`jump_vms.yaml`)
+
+Points each jump machine's two network cards at its VLAN interfaces: the external machine on transit
+and venue, the internal one on admin and transit. Set the machines' names in `/etc/freezy-net/vars.yaml`
+(`freezy_jump_vms`). The cards keep their MAC addresses, so the settings inside the machines still
+apply. Only the saved definition changes; a running machine picks it up the next time it is shut down
+and started, and the playbook lists the machines still waiting for that.
 
 ### The helper, the filter and Kea (`host_setup.yaml`)
 
@@ -127,7 +133,8 @@ with a count of dropped packets.
 ## Tests
 
 `python3 -m unittest deploy/host/test_freezy_net_helper.py` runs the helper against a fake playbook
-runner. The arena side is covered by `network/unifiswitch_test.go`.
+runner, and `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
+machine's network cards. The arena side is covered by `network/unifiswitch_test.go`.
 
 `deploy/host/test_freezy_firewall.sh` sends real packets through the filter inside a private network
 namespace (no root needed, nothing on the machine changes). It checks each path is open without the

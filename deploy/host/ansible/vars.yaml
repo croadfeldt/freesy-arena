@@ -6,8 +6,24 @@
 # never has an address of its own; host_network.yaml sets that up.
 freezy_field_interface: enp1s0
 
-# The field server's own address lives on a macvlan on top of that interface.
+# VLANs the field server carries for others and never takes an address on: the venue's internet, the
+# link between the two jump virtual machines, and the admin (FMS) network. See ../NETWORK.md.
+freezy_uplink_vlans:
+  - { name: venue,   vlan: 999, connection: vlan999 }
+  - { name: transit, vlan: 998, connection: vlan998 }
+  - { name: admin,   vlan: 100, connection: vlan100 }
+
+# The two jump virtual machines and the VLAN interface each of their network cards attaches to, in
+# the order the cards appear in the machine. Set the real machine names in /etc/freezy-net/vars.yaml.
+freezy_jump_vms:
+  - { domain: jump-external, interfaces: [vlan998, vlan999] }
+  - { domain: jump-internal, interfaces: [vlan100, vlan998] }
+
+# The field server's own address lives on a macvlan on top of the admin VLAN. It has to share that
+# VLAN interface with the internal jump machine: two things on different interfaces of the same
+# network card cannot reach each other through the switch.
 freezy_fms_connection: cheesy_macvlan
+freezy_fms_parent: vlan100
 freezy_fms_prefix_length: 24
 freezy_fms_gateway: 10.0.100.1
 freezy_fms_dns: [10.0.100.1]

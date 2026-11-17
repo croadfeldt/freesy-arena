@@ -1,0 +1,57 @@
+#!/usr/bin/python3
+"""Point a libvirt virtual machine's network cards at host interfaces.
+
+Reads the machine's definition (virsh dumpxml --inactive) on standard input and takes one host
+interface name per network card, in the order the cards appear. Each card becomes a direct (macvtap,
+bridge mode) attachment to that interface; its MAC address and model are kept, so the machine sees
+the same cards as before.
+
+Prints the new definition and exits 0 if anything changed, exits 3 if the definition already matches
+(nothing printed), and exits 2 with a message if the machine does not have exactly that many cards.
+"""
+import sys
+import xml.etree.ElementTree as ET
+
+
+def rewrite(xml_text, host_interfaces):
+    """Return (new_xml, changed). Raises ValueError if the card count does not match."""
+    root = ET.fromstring(xml_text)
+    cards = root.findall("./devices/interface")
+    if len(cards) != len(host_interfaces):
+        raise ValueError(
+            "the machine has %d network cards, expected %d" % (len(cards), len(host_interfaces)))
+    changed = False
+    for card, dev in zip(cards, host_interfaces):
+        source = card.find("source")
+        wanted = {"dev": dev, "mode": "bridge"}
+        if card.get("type") == "direct" and source is not None and dict(source.attrib) == wanted:
+            continue
+        changed = True
+        card.set("type", "direct")
+        if source is None:
+            source = ET.SubElement(card, "source")
+        source.attrib.clear()
+        source.attrib.update(wanted)
+        # A leftover <target dev="macvtapN"/> or bridge-only settings would not apply to the new attachment.
+        for stale in card.findall("target") + card.findall("virtualport"):
+            card.remove(stale)
+    return ET.tostring(root, encoding="unicode"), changed
+
+
+def main(argv):
+    if len(argv) < 2:
+        print("usage: freezy-vm-interfaces HOST_INTERFACE... < domain.xml", file=sys.stderr)
+        return 2
+    try:
+        new_xml, changed = rewrite(sys.stdin.read(), argv[1:])
+    except (ValueError, ET.ParseError) as err:
+        print("freezy-vm-interfaces: %s" % err, file=sys.stderr)
+        return 2
+    if not changed:
+        return 3
+    print(new_xml)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
