@@ -161,9 +161,45 @@
       changed_when: false
       tags: host
 
+    # The arena's container may only write where SELinux says containers may. Its volume mount labels
+    # the request directory when the container starts, but systemd-tmpfiles puts the system's default
+    # label back whenever it runs, which locks the running arena out. So the default itself is made the
+    # container label; then every route to these directories ends in the same place.
+    - name: Check whether SELinux is on
+      ansible.builtin.command: selinuxenabled
+      register: freezy_selinux
+      changed_when: false
+      failed_when: false
+      tags: host
+
+    - name: Make the container label the default for the spool directories
+      ansible.builtin.shell: |
+        spec='/run/freezy-net/(request|result)(/.*)?'
+        case "$(matchpathcon -n /run/freezy-net/request) $(matchpathcon -n /run/freezy-net/result)" in
+          *container_file_t*container_file_t*) exit 0 ;;
+        esac
+        semanage fcontext -a -t container_file_t "$spec" 2>/dev/null \
+          || semanage fcontext -m -t container_file_t "$spec"
+        echo changed
+      register: freezy_spool_label
+      changed_when: "'changed' in freezy_spool_label.stdout"
+      when: freezy_selinux.rc == 0
+      tags: host
+
     - name: Create the spool directories
       ansible.builtin.command: systemd-tmpfiles --create /usr/lib/tmpfiles.d/freezy-net.conf
       changed_when: false
+      tags: host
+
+    - name: Check the spool directories carry the container label
+      ansible.builtin.shell: |
+        for d in /run/freezy-net/request /run/freezy-net/result; do
+          stat -c '%C' "$d" | grep -q ':container_file_t:' || echo "$d is labelled $(stat -c '%C' "$d")"
+        done
+      register: freezy_spool_wrong
+      changed_when: false
+      failed_when: freezy_spool_wrong.stdout != ''
+      when: freezy_selinux.rc == 0
       tags: host
 
     - name: Watch for the arena's requests now and at every boot

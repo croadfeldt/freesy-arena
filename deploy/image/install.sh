@@ -16,7 +16,8 @@ host=$src/deploy/host
 # libvirt's `default` network is not installed: its DHCP server would hold the port Kea needs. Weak
 # dependencies are left out: they pull in storage and network back ends the field server never uses.
 dnf -y --setopt=install_weak_deps=False install libvirt-daemon-kvm libvirt-daemon-config-nwfilter \
-    libvirt-client qemu-img ansible-core nftables firewalld python3 tmux vim-enhanced rsync
+    libvirt-client qemu-img ansible-core nftables firewalld python3 tmux vim-enhanced rsync \
+    policycoreutils-python-utils
 dnf clean all
 rm -rf /var/cache/* /var/log/dnf* /var/lib/dnf /run/dnf
 
