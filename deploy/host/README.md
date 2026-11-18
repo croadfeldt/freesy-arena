@@ -40,9 +40,11 @@ waiting for that.
 
     ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
 
-It sets the machine's two addresses and its firewall: the venue side accepts only ssh and translates
-the address of everything leaving through it, the transit side accepts ssh and DNS, and nothing is
-forwarded inward. A setting that is already right is not touched, so it is safe to run over the
+It sets the machine's firewall: the venue side accepts only ssh and translates the address of
+everything leaving through it, the transit side accepts ssh, DNS and DHCP, and nothing is forwarded
+inward. It also installs `deploy/jump/freezy-transit-select`, which picks a transit network that does
+not overlap the venue's and serves it by DHCP, falling back to a default after two minutes with no
+venue network (`NETWORK.md` explains the choice). It needs `dnsmasq` on the machine. A setting that is already right is not touched, so it is safe to run over the
 connection it uses. It stops if a zone carries ports, port forwards or rich rules it does not manage,
 so a hand-made exception is noticed and not silently removed.
 
@@ -147,7 +149,8 @@ with a count of dropped packets.
 ## Tests
 
 `python3 -m unittest deploy/host/test_freezy_net_helper.py` runs the helper against a fake playbook
-runner, and `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
+runner, `python3 -m unittest deploy/jump/test_freezy_transit_select.py` covers the choice of transit
+network, and `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
 machine's network cards. The arena side is covered by `network/unifiswitch_test.go`.
 
 `deploy/host/test_freezy_firewall.sh` sends real packets through the filter inside a private network

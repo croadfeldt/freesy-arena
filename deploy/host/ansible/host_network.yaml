@@ -127,28 +127,24 @@
         ipv6.method disabled
       when: freezy_fms_connection not in freezy_connections.stdout_lines
 
-    # ---- The way in: an address on the transit VLAN. Never a route to anywhere; the team VLAN filter
-    # limits it to ssh and ping. ----
+    # ---- The way in: an address on the transit VLAN, handed out by the jump machine. It never brings
+    # a default route or DNS with it, and the team VLAN filter limits it to ssh and ping. ----
 
     - name: Create the transit address
       ansible.builtin.command: >-
         nmcli connection add type macvlan con-name {{ freezy_transit_connection }}
         ifname {{ freezy_transit_connection }} dev {{ freezy_transit_parent }} mode bridge tap no
-        connection.autoconnect yes
-        ipv4.method manual ipv4.addresses {{ freezy_transit_address }} ipv4.never-default yes
+        connection.autoconnect yes connection.autoconnect-retries 0
+        ipv4.method auto ipv4.dhcp-client-id {{ freezy_transit_client_id }}
+        ipv4.never-default yes ipv4.ignore-auto-dns yes ipv4.ignore-auto-routes yes
+        ipv4.may-fail yes ipv4.dhcp-timeout infinity
         ipv6.method disabled
       when:
-        - freezy_transit_address | default('', true) | length > 0
+        - freezy_transit_enabled | bool
         - freezy_transit_connection not in freezy_connections.stdout_lines
 
-    - name: Check the transit address is up
-      ansible.builtin.command: ip -4 -o addr show dev {{ freezy_transit_connection }}
-      register: freezy_transit_up
-      changed_when: false
-      until: (' ' ~ freezy_transit_address ~ ' ') in freezy_transit_up.stdout
-      retries: 10
-      delay: 1
-      when: freezy_transit_address | default('', true) | length > 0
+    # Its address arrives from the jump machine whenever that is running, so there is nothing to wait
+    # for here; the connection keeps asking until it gets one.
 
     # ---- Prove the result on the running system, not just in the settings. ----
 

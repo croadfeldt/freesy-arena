@@ -1,40 +1,37 @@
-# The settings inside the jump virtual machine: its two addresses and its firewall (see
-# ../NETWORK.md). Run it against the machine:
+# The settings inside the jump virtual machine (see ../NETWORK.md). Run it against the machine:
 #
 #   ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
 #
-# For that machine it sets:
-#   - the outside card (the venue's network): its address, in the firewall's `external` zone, which accepts
-#     only ssh and translates the address of everything leaving through it;
-#   - the inside card (the transit network): its address, in the `internal` zone, which accepts ssh and DNS;
+# It sets:
+#   - the outside card (the venue's network): address from the venue by DHCP, in the firewall's
+#     `external` zone, which accepts only ssh and translates the address of everything leaving;
+#   - the inside card (the transit network, the UniFi gateway's "internet"): in the `internal` zone,
+#     which accepts ssh, DNS and DHCP. Its network is chosen by freezy-transit-select so that it never
+#     overlaps the venue's, and it hands out addresses by DHCP. If the venue gives no address within
+#     two minutes, it settles on a network anyway, so the field works with no venue network;
 #   - forwarding on, so the inside network can get out. Nothing is forwarded inward.
 #
-# It needs NetworkManager and firewalld on the machine and installs nothing. A setting that is already
-# right is not touched, so running it over a working machine does not interrupt the connection it runs
-# over.
-- name: Configure a jump virtual machine
+# It needs NetworkManager, firewalld and dnsmasq on the machine and installs no packages. A setting
+# that is already right is not touched, so running it over a working machine does not interrupt the
+# connection it runs over.
+- name: Configure the jump virtual machine
   hosts: all
   become: true
   gather_facts: false
   vars_files:
     - vars.yaml
   vars:
-    freezy_jump_role: external
+    freezy_jump_src: "{{ playbook_dir }}/../../jump"
     freezy_cards:
-      - "{{ freezy_jump_roles[freezy_jump_role].outside | combine({'zone': 'external'}) }}"
-      - "{{ freezy_jump_roles[freezy_jump_role].inside | combine({'zone': 'internal'}) }}"
+      - "{{ freezy_jump_outside | combine({'zone': 'external', 'method': 'auto'}) }}"
+      - "{{ freezy_jump_inside | combine({'zone': 'internal', 'method': 'manual'}) }}"
     freezy_zones:
       - { zone: external, services: "{{ freezy_jump_outside_services }}", masquerade: true }
       - { zone: internal, services: "{{ freezy_jump_inside_services }}", masquerade: false }
   tasks:
-    - name: Check which machine this is was given
-      ansible.builtin.assert:
-        that: freezy_jump_role | default('') in freezy_jump_roles
-        fail_msg: "freezy_jump_role must be one of the roles in vars.yaml."
-
     - name: Check the machine has what this needs
       ansible.builtin.shell: |
-        for c in nmcli firewall-cmd; do command -v "$c" >/dev/null || echo "$c"; done
+        for c in nmcli firewall-cmd dnsmasq python3; do command -v "$c" >/dev/null || echo "$c"; done
         for i in {{ freezy_cards | map(attribute='ifname') | join(' ') }}; do
           ip link show "$i" >/dev/null 2>&1 || echo "interface $i"
         done
@@ -43,61 +40,7 @@
       changed_when: false
       failed_when: freezy_missing.stdout_lines | length > 0
 
-    - name: List the NetworkManager connections
-      ansible.builtin.command: nmcli -g NAME connection show
-      register: freezy_connections
-      changed_when: false
-
-    # ---- The two cards. ----
-
-    - name: Create the connections that are missing
-      ansible.builtin.command: >-
-        nmcli connection add type ethernet con-name {{ item.connection }} ifname {{ item.ifname }}
-        connection.autoconnect yes connection.zone {{ item.zone }} ipv6.method disabled
-        ipv4.method {{ item.method }}
-        {% if item.address is defined %}ipv4.addresses {{ item.address }}{% endif %}
-        {% if item.gateway is defined %}ipv4.gateway {{ item.gateway }}{% endif %}
-        {% if item.dns is defined %}ipv4.dns {{ item.dns }}{% endif %}
-      when: item.connection not in freezy_connections.stdout_lines
-      loop: "{{ freezy_cards }}"
-      loop_control:
-        label: "{{ item.connection }}"
-
-    - name: Read the connections that exist
-      ansible.builtin.command: >-
-        nmcli -g connection.interface-name,connection.zone,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns
-        connection show {{ item.connection }}
-      register: freezy_card_now
-      changed_when: false
-      when: item.connection in freezy_connections.stdout_lines
-      loop: "{{ freezy_cards }}"
-      loop_control:
-        label: "{{ item.connection }}"
-
-    # Applied in place (`device reapply`), so the card does not go down.
-    - name: Correct the connections that differ
-      ansible.builtin.shell: |
-        nmcli connection modify {{ item.item.connection }} \
-          connection.interface-name {{ item.item.ifname }} connection.zone {{ item.item.zone }} \
-          ipv4.method {{ item.item.method }} ipv4.addresses "{{ item.item.address | default('') }}" \
-          ipv4.gateway "{{ item.item.gateway | default('') }}" ipv4.dns "{{ item.item.dns | default('') }}" \
-          && nmcli device reapply {{ item.item.ifname }}
-      when:
-        - item.stdout_lines is defined
-        - (item.stdout_lines + ['', '', ''])[:6] != wanted
-      vars:
-        wanted:
-          - "{{ item.item.ifname }}"
-          - "{{ item.item.zone }}"
-          - "{{ item.item.method }}"
-          - "{{ item.item.address | default('') }}"
-          - "{{ item.item.gateway | default('') }}"
-          - "{{ item.item.dns | default('') }}"
-      loop: "{{ freezy_card_now.results }}"
-      loop_control:
-        label: "{{ item.item.connection }}"
-
-    # ---- The firewall. ----
+    # ---- The firewall first, so the cards land in zones that already have the right rules. ----
 
     # Sets each zone to exactly the listed services and address translation setting. Prints "changed"
     # only if it had to alter something.
@@ -137,8 +80,108 @@
       register: freezy_forward
       changed_when: "'changed' in freezy_forward.stdout"
 
-    # ---- Prove it on the running machine. NetworkManager brings a new connection up, and puts cards
-    # back in their zones after a firewall reload, a moment after the command returns; hence the retries. ----
+    # ---- The two cards. The inside card's address is left to freezy-transit-select. ----
+
+    - name: List the NetworkManager connections
+      ansible.builtin.command: nmcli -g NAME connection show
+      register: freezy_connections
+      changed_when: false
+
+    - name: Create the connections that are missing
+      ansible.builtin.command: >-
+        nmcli connection add type ethernet con-name {{ item.connection }} ifname {{ item.ifname }}
+        connection.autoconnect yes connection.zone {{ item.zone }} ipv6.method disabled
+        ipv4.method {{ 'auto' if item.method == 'auto' else 'disabled' }}
+      when: item.connection not in freezy_connections.stdout_lines
+      loop: "{{ freezy_cards }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    - name: Read the connections that exist
+      ansible.builtin.command: >-
+        nmcli -g connection.interface-name,connection.zone,ipv4.method connection show {{ item.connection }}
+      register: freezy_card_now
+      changed_when: false
+      when: item.connection in freezy_connections.stdout_lines
+      loop: "{{ freezy_cards }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    # Applied in place (`device reapply`), so the card does not go down. The inside card's method is
+    # not compared: freezy-transit-select owns it.
+    - name: Correct the connections that differ
+      ansible.builtin.shell: |
+        nmcli connection modify {{ item.item.connection }} \
+          connection.interface-name {{ item.item.ifname }} connection.zone {{ item.item.zone }} \
+          {% if item.item.method == 'auto' %}ipv4.method auto ipv4.addresses "" ipv4.gateway ""{% endif %} \
+          && nmcli device reapply {{ item.item.ifname }}
+      when:
+        - item.stdout_lines is defined
+        - item.stdout_lines[:2] != [item.item.ifname, item.item.zone]
+          or (item.item.method == 'auto' and item.stdout_lines[2] != 'auto')
+      loop: "{{ freezy_card_now.results }}"
+      loop_control:
+        label: "{{ item.item.connection }}"
+
+    # ---- Choosing and serving the transit network. ----
+
+    - name: Create the directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [/etc/freezy-jump, /var/lib/freezy-jump]
+
+    - name: Write the transit settings
+      ansible.builtin.copy:
+        content: "{{ freezy_transit_settings | to_nice_json }}\n"
+        dest: /etc/freezy-jump/transit.json
+        mode: "0644"
+      vars:
+        freezy_transit_settings:
+          outside_interface: "{{ freezy_jump_outside.ifname }}"
+          inside_connection: "{{ freezy_jump_inside.connection }}"
+          inside_interface: "{{ freezy_jump_inside.ifname }}"
+          lease_time: "{{ freezy_transit_lease_time }}"
+          dhcp_restart_command: "{{ freezy_transit_dhcp_restart }}"
+          candidates: "{{ freezy_transit_candidates }}"
+          field_server_client_id: "{{ freezy_transit_client_id }}"
+
+    - name: Install the transit network chooser and its trigger
+      ansible.builtin.copy:
+        src: "{{ freezy_jump_src }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - { src: freezy-transit-select, dest: /usr/local/sbin/freezy-transit-select }
+        - { src: 90-freezy-transit, dest: /etc/NetworkManager/dispatcher.d/90-freezy-transit }
+        - { src: freezy-transit.service, dest: /etc/systemd/system/freezy-transit.service, mode: "0644" }
+        - { src: freezy-transit-dhcp.service, dest: /etc/systemd/system/freezy-transit-dhcp.service, mode: "0644" }
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Have the choice made, and DHCP served, at every boot
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop: [freezy-transit.service, freezy-transit-dhcp.service]
+      tags: systemd
+
+    # Waits for the venue's address like the boot-time run does, then settles either way.
+    - name: Choose the transit network for this venue
+      ansible.builtin.command: /usr/local/sbin/freezy-transit-select --wait {{ freezy_transit_wait_seconds }}
+      register: freezy_transit
+      changed_when: "'nothing changed' not in freezy_transit.stdout"
+
+    - name: Report the choice
+      ansible.builtin.debug:
+        msg: "{{ freezy_transit.stdout }}"
+
+    # ---- Prove it on the running machine. NetworkManager puts cards in their zones a moment after
+    # the command returns; hence the retries. ----
 
     - name: Check each card is in its zone
       ansible.builtin.command: firewall-cmd --get-zone-of-interface={{ item.ifname }}
@@ -152,14 +195,10 @@
       loop_control:
         label: "{{ item.ifname }}"
 
-    - name: Check each fixed address is up
-      ansible.builtin.command: ip -4 -o addr show dev {{ item.ifname }}
-      register: freezy_addr
+    - name: Check DHCP is being served on the inside card
+      ansible.builtin.shell: ss -H -uln 'sport = :67' | grep -F '%{{ freezy_jump_inside.ifname }}:67'
+      register: freezy_dhcp
       changed_when: false
-      until: (' ' ~ item.address ~ ' ') in freezy_addr.stdout
+      until: freezy_dhcp.rc == 0
       retries: 20
       delay: 1
-      when: item.address is defined
-      loop: "{{ freezy_cards }}"
-      loop_control:
-        label: "{{ item.ifname }}"

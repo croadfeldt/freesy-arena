@@ -19,12 +19,14 @@ freezy_jump_vms:
   - { domain: jump-external, interfaces: [vlan998, vlan999] }
 
 # The field server's own address on the transit network: the way in from the jump machine, so that
-# reaching the field server never depends on the UniFi gateway. It accepts ssh and ping only, is never
-# a route to anywhere, and the field server passes nothing through it (freezy-field.nft). Set the
-# address to "" to leave it out.
+# reaching the field server never depends on the UniFi gateway. The jump machine hands it out by DHCP
+# and always gives the field server the address just below its own, recognising it by this client id.
+# It accepts ssh and ping only, is never a route to anywhere, and the field server passes nothing
+# through it (freezy-field.nft). Set freezy_transit_enabled to false to leave it out.
+freezy_transit_enabled: true
 freezy_transit_connection: cheesy_transit
 freezy_transit_parent: vlan998
-freezy_transit_address: 192.168.254.253/29
+freezy_transit_client_id: freezy-field-server
 
 # The field server's own address lives on a macvlan on top of the admin VLAN. Its gateway and DNS
 # server are the UniFi gateway.
@@ -67,13 +69,25 @@ freezy_kea_image: localhost/freezy-kea:latest
 
 # Inside the jump virtual machine (jump_vm.yaml). `outside` is the card on the venue's network,
 # `inside` the card on the transit network. The interface names are the ones the machine uses today.
-freezy_jump_roles:
-  external:
-    outside: { ifname: eth1, connection: external, method: auto }
-    inside:  { ifname: eth0, connection: internal, method: manual, address: 192.168.254.254/29 }
+freezy_jump_outside: { ifname: eth1, connection: external }
+freezy_jump_inside:  { ifname: eth0, connection: internal }
+
+# Networks the jump machine may use for the transit network, in order of preference. It takes the first
+# one that does not overlap the venue's networks, serves it by DHCP, and keeps the last usable address
+# for itself. Three private ranges, so one is always clear.
+freezy_transit_candidates:
+  - 192.168.254.248/29
+  - 172.31.254.248/29
+  - 100.64.254.248/29
+# How long to wait for the venue to hand out an address before settling on a transit network without
+# one (the first candidate, or the one already in use). This is what lets the field run with no venue.
+freezy_transit_wait_seconds: 120
+# Short leases, so the UniFi gateway follows within minutes if the transit network ever has to move.
+freezy_transit_lease_time: 5m
+freezy_transit_dhcp_restart: [systemctl, restart, freezy-transit-dhcp.service]
 
 # What each side of a jump machine accepts for itself. Everything else addressed to the machine is
 # refused. Traffic passing through is only ever allowed from the inside card out to the outside card,
 # with its address translated; nothing is forwarded inward.
 freezy_jump_outside_services: [ssh]
-freezy_jump_inside_services: [ssh, dns]
+freezy_jump_inside_services: [ssh, dns, dhcp]

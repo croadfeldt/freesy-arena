@@ -20,7 +20,7 @@ runs over it as VLANs on the UniFi switches.
 | VLAN | Network | What it is | Routed by |
 |---|---|---|---|
 | 999 | from the venue (DHCP) | venue internet | the venue |
-| 998 | 192.168.254.248/29 | transit: the field side's "internet" | jump machine (.254) |
+| 998 | 192.168.254.248/29 unless the venue uses it | transit: the field side's "internet", served by DHCP | jump machine (last address) |
 | 100 | 10.0.100.0/24 | admin: FMS, field equipment | UniFi gateway (10.0.100.1) |
 | UniFi management | 10.0.0.0/24 | UniFi switches and access points | UniFi gateway |
 | 10, 20, 30, 40, 50, 60 | `10.TE.AM.0/24` per match | red 1 to 3, blue 1 to 3: one team's driver station and robot | field server (`10.TE.AM.4`); VLAN-only on UniFi |
@@ -29,9 +29,9 @@ runs over it as VLANs on the UniFi switches.
 venue internet
      │ VLAN 999
 ┌────┴───────────┐
-│ jump machine   │ 192.168.254.254 · NAT out, ssh in, DNS for the transit network
+│ jump machine   │ NAT out, ssh in · DHCP and DNS for the transit network
 └────┬───────────┘
-     │ VLAN 998 (transit) ──────────────── field server, 192.168.254.253 (ssh only)
+     │ VLAN 998 (transit) ──────────────── field server (ssh only)
 ┌────┴───────────┐
 │ UniFi gateway  │ WAN on transit · routes admin and management · NAT out
 └────┬───────────┘
@@ -54,12 +54,13 @@ The physical interface has no address. Everything sits on top of it:
 | the interface | ethernet | none | carries all the VLANs |
 | `vlan999` | VLAN 999 | none | jump machine, card 2 |
 | `vlan998` | VLAN 998 | none | jump machine, card 1; parent of `cheesy_transit` |
-| `cheesy_transit` | macvlan on `vlan998` | 192.168.254.253/29, no default route | the way in: ssh from the jump machine |
+| `cheesy_transit` | macvlan on `vlan998` | by DHCP from the jump machine, always the address just below the jump machine's; no default route | the way in: ssh from the jump machine |
 | `vlan100` | VLAN 100 | none | parent of `cheesy_macvlan` |
 | `cheesy_macvlan` | macvlan on `vlan100` | 10.0.100.5/24, gateway and DNS 10.0.100.1 | the arena |
 | `vlan10` to `vlan60` | VLANs 10 to 60 | `10.TE.AM.4/24` while that team is on the field, otherwise none | team gateway, Kea DHCP |
 
-Getting in from the venue is two hops: ssh to the jump machine, then ssh to 192.168.254.253. That path
+Getting in from the venue is two hops: ssh to the jump machine, then ssh to the field server's transit
+address (192.168.254.253 unless the transit network had to move). That path
 does not pass through the UniFi gateway, so the field server stays reachable when the UniFi side is
 down or misconfigured. The transit address accepts ssh and ping only, and the field server never passes
 traffic between the transit network and anything else.
@@ -71,17 +72,38 @@ Built by `ansible/jump_vm.yaml`.
 | | |
 |---|---|
 | Outside card, VLAN 999 | address from the venue (DHCP); accepts ssh only |
-| Inside card, VLAN 998 | 192.168.254.254/29; accepts ssh and DNS |
+| Inside card, VLAN 998 | the last address of the transit network; accepts ssh, DNS and DHCP; hands out addresses by DHCP |
 | Passing through | inside to outside only, address translated; nothing forwarded inward, no port forwards |
 
 It also runs `dnscrypt-proxy` on its inside address, which the playbook does not configure yet.
+
+### How the transit network is chosen
+
+The transit network must not overlap the venue's, or the jump machine could not tell them apart.
+`freezy-transit-select` on the jump machine decides:
+
+1. It looks at every network the venue side uses: the address the venue handed out and any routes that
+   came with it.
+2. It takes the first of three candidates that overlaps none of them: 192.168.254.248/29, then
+   172.31.254.248/29, then 100.64.254.248/29. They are in three different private ranges, so one is
+   always clear.
+3. It keeps the current choice for as long as it is clear, so the field side is not reshuffled at
+   every lease renewal or every new venue.
+4. If the venue hands out no address within two minutes of boot, it settles anyway, on the current
+   choice or the first candidate. The field then runs with no venue network at all, and if a venue
+   network turns up later and collides, the transit network moves then.
+
+Within the chosen network the jump machine takes the last address, the field server always gets the one
+below it (recognised by the client id it sends), and the rest are handed out, which is how the UniFi
+gateway gets its WAN address. Leases are five minutes, so if the network ever has to move the gateway
+follows within minutes.
 
 ## On the UniFi side
 
 Not managed from this repository. It is set once and left alone:
 
-- **Gateway WAN**: a port on VLAN 998, fixed address in 192.168.254.249 to .252, gateway and DNS
-  192.168.254.254. Nothing on the transit network hands out addresses.
+- **Gateway WAN**: a port on VLAN 998, set to DHCP. The jump machine gives it an address, gateway and
+  DNS server.
 - **Admin network**: VLAN 100, 10.0.100.0/24, gateway 10.0.100.1, no DHCP range that includes
   10.0.100.5.
 - **Team VLANs 10 to 60**: VLAN-only networks. No gateway address, no DHCP, no DHCP guarding that would
@@ -131,7 +153,7 @@ the list in the FMS whitepaper; the season's game manual has the authoritative o
 |---|---|---|---|
 | 1 | `ansible/host_network.yaml` | field server | the address-free interface, VLANs 999, 998, 100 and 10 to 60, the FMS macvlan and the transit address |
 | 2 | `ansible/jump_vms.yaml` | field server | the jump machine's two cards attached to VLANs 998 and 999 |
-| 3 | `ansible/jump_vm.yaml` | against the jump machine | the addresses and firewall inside it |
+| 3 | `ansible/jump_vm.yaml` | against the jump machine | its firewall, the transit network chooser and the transit DHCP server |
 | 4 | `ansible/host_setup.yaml` | field server | the host network helper, the team VLAN filter and the Kea container unit |
 | every match | `ansible/match_network.yaml` | field server, started by the arena | team gateway addresses and DHCP scopes for the six teams on the field |
 

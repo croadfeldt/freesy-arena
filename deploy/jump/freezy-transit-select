@@ -1,0 +1,151 @@
+#!/usr/bin/python3
+"""Pick the transit network for the jump machine and serve it.
+
+The jump machine's outside card takes whatever address the venue gives it. Its inside card is the
+"internet" for the UniFi gateway and hands out addresses by DHCP. The inside network must not overlap
+the venue's, or the machine could not tell the two apart. This script looks at the networks the venue
+side uses, picks the first candidate that does not overlap any of them, puts the inside card on it and
+points the DHCP server (a DHCP-only dnsmasq, freezy-transit-dhcp.service) at it.
+
+It keeps the current choice whenever that is still clear of the venue, so a renewed lease does not
+shuffle the field side. The field server always gets the same address (the one just below the jump
+machine's), by the client id it sends.
+
+With --wait SECONDS it gives the venue that long to hand out an address. If none arrives, it goes ahead
+without one: the current choice is kept, or the first candidate is used. That is what lets the field
+run with no venue network at all.
+
+Run at boot with --wait (freezy-transit.service), by the NetworkManager dispatcher whenever the outside
+card comes up or its lease changes, and by jump_vm.yaml. Settings: /etc/freezy-jump/transit.json.
+"""
+import ipaddress
+import json
+import subprocess
+import sys
+import time
+
+CONFIG = "/etc/freezy-jump/transit.json"
+DHCP_CONFIG = "/etc/freezy-jump/dnsmasq.conf"
+DHCP_RESTART = ["systemctl", "restart", "freezy-transit-dhcp.service"]
+
+
+def choose(venue_networks, candidates, current=None):
+    """Return the transit network to use.
+
+    venue_networks: networks in use on the venue side. candidates: networks to pick from, in order of
+    preference. current: the network the inside card is on now, or None. The current network is kept if
+    it is a candidate and still clear of the venue. Raises ValueError if every candidate overlaps.
+    """
+    venue = [ipaddress.ip_network(n, strict=False) for n in venue_networks]
+    options = [ipaddress.ip_network(c) for c in candidates]
+
+    def clear(network):
+        return not any(network.overlaps(v) for v in venue)
+
+    if current is not None:
+        current = ipaddress.ip_network(current, strict=False)
+        if current in options and clear(current):
+            return current
+    for option in options:
+        if clear(option):
+            return option
+    raise ValueError("every candidate transit network overlaps the venue's networks: %s"
+                     % ", ".join(str(v) for v in venue))
+
+
+def plan(network):
+    """Addresses within the transit network: the jump machine takes the last usable address, the field
+    server the one below it, and the rest are handed out."""
+    hosts = list(network.hosts())
+    if len(hosts) < 4:
+        raise ValueError("transit network %s is too small" % network)
+    return {"jump": "%s/%d" % (hosts[-1], network.prefixlen), "jump_address": str(hosts[-1]),
+            "field_server": str(hosts[-2]), "pool_first": str(hosts[0]), "pool_last": str(hosts[-3]),
+            "netmask": str(network.netmask)}
+
+
+def dhcp_config(cfg, addresses):
+    """The DHCP server's settings. port=0: DHCP only, the machine's DNS proxy keeps port 53. Short
+    leases, so the UniFi gateway follows within minutes if the network ever has to move."""
+    return "".join(line + "\n" for line in [
+        "# Written by freezy-transit-select. Do not edit.",
+        "port=0",
+        "interface=%s" % cfg["inside_interface"],
+        "bind-dynamic",
+        "dhcp-authoritative",
+        "dhcp-range=%s,%s,%s,%s" % (addresses["pool_first"], addresses["pool_last"], addresses["netmask"],
+                                    cfg.get("lease_time", "5m")),
+        "dhcp-option=option:router,%s" % addresses["jump_address"],
+        "dhcp-option=option:dns-server,%s" % addresses["jump_address"],
+        # NetworkManager sends a text client id with a zero byte in front, so match it byte for byte.
+        "dhcp-host=id:%s,%s" % (":".join("%02x" % b for b in b"\0" + cfg["field_server_client_id"].encode()),
+                                addresses["field_server"]),
+        "dhcp-leasefile=/var/lib/freezy-jump/dnsmasq.leases",
+    ])
+
+
+def run(*cmd):
+    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+
+
+def venue_networks(ifname):
+    """Every network the outside card has an address in or a route to, except the default route."""
+    found = []
+    for entry in json.loads(run("ip", "-j", "-4", "addr", "show", "dev", ifname)):
+        for addr in entry.get("addr_info", []):
+            found.append("%s/%d" % (addr["local"], addr["prefixlen"]))
+    for route in json.loads(run("ip", "-j", "-4", "route", "show", "dev", ifname)):
+        if route.get("dst") not in (None, "default"):
+            found.append(route["dst"] if "/" in route["dst"] else route["dst"] + "/32")
+    return found
+
+
+def main(argv):
+    wait = 0
+    if len(argv) == 3 and argv[1] == "--wait":
+        wait = int(argv[2])
+    elif len(argv) != 1:
+        print("usage: freezy-transit-select [--wait SECONDS]", file=sys.stderr)
+        return 2
+    with open(CONFIG) as handle:
+        cfg = json.load(handle)
+
+    deadline = time.monotonic() + wait
+    venue = venue_networks(cfg["outside_interface"])
+    while not venue and time.monotonic() < deadline:
+        time.sleep(2)
+        venue = venue_networks(cfg["outside_interface"])
+    seen = ", ".join(venue) if venue else "no address from the venue"
+
+    now = run("nmcli", "-g", "ipv4.method,ipv4.addresses", "connection", "show",
+              cfg["inside_connection"]).splitlines() + ["", ""]
+    network = choose(venue, cfg["candidates"], now[1] or None)
+    addresses = plan(network)
+    wanted_config = dhcp_config(cfg, addresses)
+    try:
+        with open(DHCP_CONFIG) as handle:
+            config_ok = handle.read() == wanted_config
+    except FileNotFoundError:
+        config_ok = False
+    if now[0] == "manual" and now[1] == addresses["jump"] and config_ok:
+        print("freezy-transit-select: transit network %s is right for the venue (%s); nothing changed"
+              % (network, seen))
+        return 0
+
+    with open(DHCP_CONFIG, "w") as handle:
+        handle.write(wanted_config)
+    run("nmcli", "connection", "modify", cfg["inside_connection"], "ipv4.method", "manual",
+        "ipv4.addresses", addresses["jump"], "ipv4.gateway", "", "ipv4.dns", "", "ipv4.never-default", "yes")
+    run("nmcli", "connection", "up", cfg["inside_connection"])
+    run(*cfg.get("dhcp_restart_command", DHCP_RESTART))
+    print("freezy-transit-select: transit network is now %s (%s); field server at %s"
+          % (network, seen, addresses["field_server"]))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except (ValueError, subprocess.CalledProcessError, OSError) as err:
+        print("freezy-transit-select: %s" % err, file=sys.stderr)
+        sys.exit(1)

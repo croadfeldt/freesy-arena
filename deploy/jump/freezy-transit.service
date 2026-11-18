@@ -1,0 +1,14 @@
+# At boot, give the venue two minutes to hand out an address, then settle the transit network either
+# way, so the field side works with or without a venue network.
+[Unit]
+Description=Choose the Freezy Arena transit network
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/freezy-transit-select --wait 120
+
+[Install]
+WantedBy=multi-user.target

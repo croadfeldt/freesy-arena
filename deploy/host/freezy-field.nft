@@ -23,11 +23,13 @@ table inet freezy_field {
     chain input {
         type filter hook input priority filter - 10; policy accept;
 
-        # Only the transit address itself answers here, not the field server's other addresses.
-        iifname $transit_ifs ip daddr != $transit_address counter drop
+        # Only the transit address itself answers here, not the field server's other addresses. The
+        # address comes by DHCP, so this asks whether the destination belongs to the arriving interface.
+        iifname $transit_ifs fib daddr . iif type != local counter drop
         iifname $transit_ifs ct state established,related accept
         iifname $transit_ifs tcp dport 22 accept
         iifname $transit_ifs ip protocol icmp accept
+        iifname $transit_ifs udp sport 67 udp dport 68 accept
         iifname $transit_ifs counter drop
 
         iifname != $team_vlans accept

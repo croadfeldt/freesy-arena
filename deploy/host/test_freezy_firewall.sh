@@ -19,7 +19,6 @@ tmp=$(mktemp -d -p /run)
 cat > "$tmp/freezy-field-vars.nft" <<'VARS'
 define team_vlans = { "vlan10", "vlan20" }
 define transit_ifs = { "cheesy_transit" }
-define transit_address = 192.168.254.253
 define fms_address = 10.0.100.5
 define fms_network = 10.0.100.0/24
 define team_gateway_host = 0.0.0.4
