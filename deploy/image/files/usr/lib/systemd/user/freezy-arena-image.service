@@ -1,0 +1,14 @@
+# Makes the arena container image, in the arena account's store, from the copy carried in the operating
+# system image.
+[Unit]
+Description=Prepare the Freezy Arena image
+ConditionUser=cheesy
+ConditionPathExists=/usr/share/freezy-images/freezy-arena-rootfs.tar
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/freezy-image-import localhost/freezy-arena:latest /usr/share/freezy-images/freezy-arena-rootfs.tar 'ENTRYPOINT ["/app/entrypoint.sh"]' 'WORKDIR /app' 'VOLUME /data'
+
+[Install]
+WantedBy=default.target

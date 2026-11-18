@@ -1,0 +1,69 @@
+# Attach the two jump virtual machines to their VLANs (see ../NETWORK.md). Run it as root on the field
+# server after host_network.yaml:
+#
+#   ansible-playbook -i localhost, -c local deploy/host/ansible/jump_vms.yaml
+#
+# For each machine in freezy_jump_vms it points each network card, in order, at the listed VLAN
+# interface. The cards keep their MAC addresses, so the machines' own network settings still apply.
+#
+# It changes only the saved definition. A running machine keeps its current attachment until it is
+# next shut down and started, so running this cannot cut off a session that goes through the jump
+# machines. The last task lists the machines that still need that restart.
+- name: Attach the jump virtual machines to their VLANs
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  tasks:
+    - name: Load host overrides, if any
+      ansible.builtin.include_vars:
+        file: /etc/freezy-net/vars.yaml
+      when: "'/etc/freezy-net/vars.yaml' is file"
+
+    - name: Check every VLAN interface the machines attach to exists
+      ansible.builtin.command: ip link show {{ item }}
+      changed_when: false
+      loop: "{{ freezy_jump_vms | map(attribute='interfaces') | flatten | unique }}"
+
+    - name: Check the machines are defined
+      ansible.builtin.command: virsh dominfo {{ item.domain }}
+      changed_when: false
+      loop: "{{ freezy_jump_vms }}"
+      loop_control:
+        label: "{{ item.domain }}"
+
+    # Exit 0: a new definition was saved. Exit 3: it already matched. Anything else is a failure.
+    - name: Point each machine's network cards at its VLANs
+      ansible.builtin.shell: |
+        set -o pipefail
+        new=$(virsh dumpxml --inactive {{ item.domain }} \
+              | {{ playbook_dir }}/../freezy-vm-interfaces {{ item.interfaces | join(' ') }}) || exit $?
+        tmp=$(mktemp) && printf '%s\n' "$new" > "$tmp" && virsh define "$tmp"; rc=$?; rm -f "$tmp"; exit $rc
+      args:
+        executable: /usr/bin/bash
+      register: freezy_vm_defined
+      changed_when: freezy_vm_defined.rc == 0
+      failed_when: freezy_vm_defined.rc not in [0, 3]
+      loop: "{{ freezy_jump_vms }}"
+      loop_control:
+        label: "{{ item.domain }}"
+
+    - name: Compare each running machine with its saved definition
+      ansible.builtin.shell: |
+        virsh domstate {{ item.domain }} | grep -q '^running' || exit 0
+        for dev in {{ item.interfaces | join(' ') }}; do
+          virsh domiflist {{ item.domain }} | awk '{print $3}' | grep -qx "$dev" || { echo restart; exit 0; }
+        done
+      register: freezy_vm_live
+      changed_when: false
+      loop: "{{ freezy_jump_vms }}"
+      loop_control:
+        label: "{{ item.domain }}"
+
+    - name: Report the machines that need a shutdown and start to pick up the change
+      ansible.builtin.debug:
+        msg: >-
+          {{ freezy_vm_live.results | selectattr('stdout', 'equalto', 'restart')
+             | map(attribute='item.domain') | list | default([], true) }}

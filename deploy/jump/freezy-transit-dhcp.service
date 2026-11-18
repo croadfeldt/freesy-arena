@@ -1,0 +1,16 @@
+# DHCP for the transit network (the UniFi gateway and the field server). DHCP only; freezy-transit-select
+# writes its settings and restarts it.
+[Unit]
+Description=DHCP for the Freezy Arena transit network
+After=NetworkManager.service freezy-transit.service
+ConditionPathExists=/etc/freezy-jump/dnsmasq.conf
+StartLimitIntervalSec=0
+
+[Service]
+StateDirectory=freezy-jump
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/freezy-jump/dnsmasq.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

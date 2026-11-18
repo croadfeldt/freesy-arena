@@ -1,0 +1,50 @@
+# The field server as an image mode (bootc) system: the operating system, the arena's host pieces and
+# both containers in one image, so a field server is installed and updated as a whole and works with no
+# network at the venue. Everything is built here in one pass from the Fedora image mode base:
+#
+#   podman build -t localhost/freezy-field-server -f deploy/image/Containerfile .
+#
+# deploy/image/install.sh holds the list of what goes in. See deploy/image/README.md.
+ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:45
+
+# The arena: the same build as the repository's top-level Containerfile.
+FROM docker.io/library/golang:1.26 AS arena-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -tags timetzdata -o /out/cheesy-arena .
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS arena
+WORKDIR /app
+COPY --from=arena-build /out/cheesy-arena ./
+COPY templates ./templates
+COPY static ./static
+COPY schedules ./schedules
+COPY font ./font
+COPY deploy/container-entrypoint.sh /app/entrypoint.sh
+RUN mv static/img static/img.dist && ln -s /data/img static/img && ln -s /data/logs static/logs && ln -s /data/db db && ln -s /data/event.db event.db
+
+# Kea: the same build as deploy/kea/Containerfile.
+FROM registry.fedoraproject.org/fedora:45 AS kea
+RUN dnf -y install kea && dnf clean all && rm -rf /var/cache/dnf
+
+# Both containers' root filesystems as archives, to carry inside the operating system image.
+FROM registry.fedoraproject.org/fedora:45 AS pack
+COPY --from=arena / /rootfs/arena
+COPY --from=kea / /rootfs/kea
+RUN mkdir /out \
+    && tar -C /rootfs/arena --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-arena-rootfs.tar . \
+    && tar -C /rootfs/kea --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-kea-rootfs.tar .
+
+FROM ${BASE_IMAGE}
+RUN --mount=type=bind,target=/src \
+    --mount=type=bind,from=pack,source=/out,target=/images \
+    /src/deploy/image/install.sh /src /images
+
+# Site-specific files (host name, ssh keys, sudo rules, /etc/freezy-net/vars.yaml). Empty in this
+# repository; a site's own build adds its files on top.
+COPY deploy/image/site/ /
+
+# Fails the build if a unit, quadlet or bootc setting is malformed.
+RUN bootc container lint

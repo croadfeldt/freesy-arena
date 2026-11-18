@@ -2,9 +2,39 @@
 # Host-specific values for the Freezy Arena team networks. This is the one place to change them.
 # On the field server, overrides go in /etc/freezy-net/vars.yaml (same keys); that file wins.
 
-# The network interface that carries the field VLANs. Only the one-time host setup uses it, to create
-# any team VLAN connection that does not exist yet.
+# The one network interface the field server uses. It carries the FMS network and the team VLANs and
+# never has an address of its own; host_network.yaml sets that up.
 freezy_field_interface: enp1s0
+
+# VLANs the field server carries for others and never takes an address on: the venue's internet, the
+# link between the two jump virtual machines, and the admin (FMS) network. See ../NETWORK.md.
+freezy_uplink_vlans:
+  - { name: venue,   vlan: 999, connection: vlan999 }
+  - { name: transit, vlan: 998, connection: vlan998 }
+  - { name: admin,   vlan: 100, connection: vlan100 }
+
+# The jump virtual machine and the VLAN interface each of its network cards attaches to, in the order
+# the cards appear in the machine. Set the real machine name in /etc/freezy-net/vars.yaml.
+freezy_jump_vms:
+  - { domain: jump-external, interfaces: [vlan998, vlan999] }
+
+# The field server's own address on the transit network: the way in from the jump machine, so that
+# reaching the field server never depends on the UniFi gateway. The jump machine hands it out by DHCP
+# and always gives the field server the address just below its own, recognising it by this client id.
+# It accepts ssh and ping only, is never a route to anywhere, and the field server passes nothing
+# through it (freezy-field.nft). Set freezy_transit_enabled to false to leave it out.
+freezy_transit_enabled: true
+freezy_transit_connection: cheesy_transit
+freezy_transit_parent: vlan998
+freezy_transit_client_id: freezy-field-server
+
+# The field server's own address lives on a macvlan on top of the admin VLAN. Its gateway and DNS
+# server are the UniFi gateway.
+freezy_fms_connection: cheesy_macvlan
+freezy_fms_parent: vlan100
+freezy_fms_prefix_length: 24
+freezy_fms_gateway: 10.0.100.1
+freezy_fms_dns: [10.0.100.1]
 
 # The account the arena's container runs as. It owns the request directory.
 freezy_arena_user: cheesy
@@ -36,3 +66,28 @@ freezy_fms_network: 10.0.100.0/24
 freezy_kea_config: /etc/freezy-net/kea/kea-dhcp4.conf
 freezy_kea_service: freezy-kea.service
 freezy_kea_image: localhost/freezy-kea:latest
+
+# Inside the jump virtual machine (jump_vm.yaml). `outside` is the card on the venue's network,
+# `inside` the card on the transit network. The interface names are the ones the machine uses today.
+freezy_jump_outside: { ifname: eth1, connection: external }
+freezy_jump_inside:  { ifname: eth0, connection: internal }
+
+# Networks the jump machine may use for the transit network, in order of preference. It takes the first
+# one that does not overlap the venue's networks, serves it by DHCP, and keeps the last usable address
+# for itself. Three private ranges, so one is always clear.
+freezy_transit_candidates:
+  - 192.168.254.248/29
+  - 172.31.254.248/29
+  - 100.64.254.248/29
+# How long to wait for the venue to hand out an address before settling on a transit network without
+# one (the first candidate, or the one already in use). This is what lets the field run with no venue.
+freezy_transit_wait_seconds: 120
+# Short leases, so the UniFi gateway follows within minutes if the transit network ever has to move.
+freezy_transit_lease_time: 5m
+freezy_transit_dhcp_restart: [systemctl, restart, freezy-transit-dhcp.service]
+
+# What each side of a jump machine accepts for itself. Everything else addressed to the machine is
+# refused. Traffic passing through is only ever allowed from the inside card out to the outside card,
+# with its address translated; nothing is forwarded inward.
+freezy_jump_outside_services: [ssh]
+freezy_jump_inside_services: [ssh, dns, dhcp]

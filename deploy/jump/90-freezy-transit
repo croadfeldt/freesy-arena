@@ -1,0 +1,9 @@
+#!/usr/bin/bash
+# NetworkManager dispatcher script (installs to /etc/NetworkManager/dispatcher.d/). When the outside
+# card comes up or its lease changes, check the transit network is still clear of the venue's.
+# (At boot, freezy-transit.service does the same with a two-minute wait for the venue.)
+outside=$(python3 -c 'import json; print(json.load(open("/etc/freezy-jump/transit.json"))["outside_interface"])') || exit 0
+[ "$1" = "$outside" ] || exit 0
+case "$2" in
+    up|dhcp4-change) exec /usr/local/sbin/freezy-transit-select ;;
+esac

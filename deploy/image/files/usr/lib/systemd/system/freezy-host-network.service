@@ -1,0 +1,15 @@
+# Builds the field server's network interfaces at every boot (deploy/host/ansible/host_network.yaml).
+# It creates what is missing and never rebuilds what exists, so after the first boot it changes nothing.
+[Unit]
+Description=Set up the Freezy Arena field server's network interfaces
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=HOME=/root ANSIBLE_LOCAL_TEMP=/run/freezy-ansible ANSIBLE_NOCOLOR=1
+ExecStart=/usr/bin/ansible-playbook -i localhost, -c local /usr/share/freezy-net/host_network.yaml
+
+[Install]
+WantedBy=multi-user.target

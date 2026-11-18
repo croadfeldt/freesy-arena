@@ -18,6 +18,7 @@ mount -t tmpfs tmpfs /run
 tmp=$(mktemp -d -p /run)
 cat > "$tmp/freezy-field-vars.nft" <<'VARS'
 define team_vlans = { "vlan10", "vlan20" }
+define transit_ifs = { "cheesy_transit" }
 define fms_address = 10.0.100.5
 define fms_network = 10.0.100.0/24
 define team_gateway_host = 0.0.0.4
@@ -35,6 +36,14 @@ for spec in "ds1 vlan10 10.2.54" "ds2 vlan20 10.11.14"; do
     ip -n "$1" addr add "$3.20/24" dev eth0 && ip -n "$1" link set eth0 up
     ip -n "$1" route add default via "$3.4"
 done
+
+# The jump machine, on the field server's transit address.
+ip netns add jump
+ip link add cheesy_transit type veth peer name eth0 netns jump
+ip addr add 192.168.254.253/29 dev cheesy_transit && ip link set cheesy_transit up
+ip -n jump link set lo up
+ip -n jump addr add 192.168.254.254/29 dev eth0 && ip -n jump link set eth0 up
+ip -n jump route add 10.0.0.0/8 via 192.168.254.253
 
 # Listeners: the arena on the field server (web 8080, DS control 1750, DS status 1160/udp, ssh 22) on
 # every address, as host networking gives it, and a web server on the second team's driver station.
@@ -107,6 +116,7 @@ PY
 chmod +x "$tmp"/bin/*
 PATH="$tmp/bin:$PATH"
 ds1() { ip netns exec ds1 "$@"; }
+jump() { ip netns exec jump "$@"; }
 
 run_checks() {
     phase=$1 closed=$2   # closed = what the filtered paths should be in this phase
@@ -123,6 +133,12 @@ run_checks() {
     check "$phase" $closed "udp 1160 on the team gateway address"               ds1 probe udp 10.2.54.4 1160
     check "$phase" $closed "ping another team's driver station"                 ds1 pingc 10.11.14.20
     check "$phase" $closed "connect to another team's driver station"           ds1 probe tcp 10.11.14.20 8080
+    check "$phase" open    "jump machine: ssh to the field server"              jump probe tcp 192.168.254.253 22
+    check "$phase" open    "jump machine: ping the field server"                jump pingc 192.168.254.253
+    check "$phase" $closed "jump machine: arena web pages"                      jump probe tcp 192.168.254.253 8080
+    check "$phase" $closed "jump machine: the FMS address through the server"   jump probe tcp 10.0.100.5 22
+    check "$phase" $closed "jump machine: routed on to a team network"          jump probe tcp 10.2.54.20 1741
+    check "$phase" $closed "team VLAN routed out to the transit network"        ds1 pingc 192.168.254.254
 }
 
 run_checks "no rules" open

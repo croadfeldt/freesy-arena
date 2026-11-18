@@ -1,0 +1,13 @@
+# Makes the Kea container image from the copy carried in the operating system image, so DHCP needs no
+# registry.
+[Unit]
+Description=Prepare the Freezy Arena Kea image
+ConditionPathExists=/usr/share/freezy-images/freezy-kea-rootfs.tar
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/freezy-image-import localhost/freezy-kea:latest /usr/share/freezy-images/freezy-kea-rootfs.tar 'ENTRYPOINT ["/usr/sbin/kea-dhcp4", "-c", "/etc/kea/kea-dhcp4.conf"]'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# Checks the host and writes its settings at every boot (deploy/host/ansible/host_setup.yaml, without
+# the steps that copy files into /usr: those are part of the image).
+[Unit]
+Description=Check and configure the Freezy Arena field server
+After=freezy-host-network.service freezy-images.service systemd-tmpfiles-setup.service
+Requires=freezy-host-network.service freezy-images.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=HOME=/root ANSIBLE_LOCAL_TEMP=/run/freezy-ansible ANSIBLE_NOCOLOR=1
+ExecStart=/usr/bin/ansible-playbook -i localhost, -c local /usr/share/freezy-net/host_setup.yaml --skip-tags usr
+
+[Install]
+WantedBy=multi-user.target

@@ -6,22 +6,58 @@ limits what a team VLAN can reach, and the playbook that installs them.
 
 ## Setting up the field server
 
-Run this as root on the field server, from a checkout of this repository, and again whenever the files
+Run these as root on the field server, from a checkout of this repository, and again whenever the files
 here change:
 
+    ansible-playbook -i localhost, -c local deploy/host/ansible/host_network.yaml
+    ansible-playbook -i localhost, -c local deploy/host/ansible/jump_vms.yaml
     podman build -t localhost/freezy-kea:latest deploy/kea
     ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
+
+### The network interfaces (`host_network.yaml`)
+
+`NETWORK.md` has the full map. The field server uses one network interface (`freezy_field_interface`
+in `ansible/vars.yaml`), which gets no address of its own. On top of it the playbook puts the venue,
+transit and admin VLANs (999, 998, 100) with no address, a macvlan on the admin VLAN carrying the FMS
+address, an ssh-only address on the transit VLAN (the way in from the jump machine), and the six team
+VLANs with no address until a match assigns one.
+
+The playbook creates whatever is missing, so it builds this from a fresh install. What already exists
+is checked and never rebuilt: if the macvlan or a VLAN is not what `vars.yaml` describes, the playbook
+stops and says so, because rebuilding the connection that carries the FMS address would cut off the
+arena and anyone logged in. The one live change it makes is removing addresses from the interface
+itself, which leaves the macvlan and the VLANs up.
+
+### The jump virtual machine (`jump_vms.yaml`, `jump_vm.yaml`)
+
+`jump_vms.yaml` runs on the field server and points the jump machine's two network cards at the
+transit and venue VLAN interfaces. Set the machine's name in `/etc/freezy-net/vars.yaml`
+(`freezy_jump_vms`). The cards keep their MAC addresses. Only the saved definition changes; a running
+machine picks it up the next time it is shut down and started, and the playbook says if it is still
+waiting for that.
+
+`jump_vm.yaml` runs against the jump machine itself:
+
+    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
+
+It sets the machine's firewall: the venue side accepts only ssh and translates the address of
+everything leaving through it, the transit side accepts ssh, DNS and DHCP, and nothing is forwarded
+inward. It also installs `deploy/jump/freezy-transit-select`, which picks a transit network that does
+not overlap the venue's and serves it by DHCP, falling back to a default after two minutes with no
+venue network (`NETWORK.md` explains the choice). It needs `dnsmasq` on the machine. A setting that is already right is not touched, so it is safe to run over the
+connection it uses. It stops if a zone carries ports, port forwards or rich rules it does not manage,
+so a hand-made exception is noticed and not silently removed.
+
+### The helper, the filter and Kea (`host_setup.yaml`)
 
 Kea runs as a container, so the first command builds its image; nothing is installed on the host. The
 playbook checks the host first and changes nothing if a check fails: `nmcli`, `nft`, `podman`,
 `ansible-playbook` and `python3` must be installed, the Kea image must be built, the arena's account
-must exist, and the FMS address must be up. Then it:
+must exist, the FMS address must be up, and the six team VLAN connections must exist. Then it:
 
 1. installs the files listed below;
 2. loads the team VLAN filter and enables it at boot;
-3. creates any of the six team VLAN connections that do not exist yet, with no address. A connection
-   that already exists is left as it is, after checking it is the VLAN `ansible/vars.yaml` says it is;
-4. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
+3. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
 
 It installs no packages and does not touch the FMS address, other connections, or any other firewall on
 the host. Host-specific values (field interface, VLAN connection names, the arena's account, addresses)
@@ -93,6 +129,9 @@ connections to exist.
 - a DHCP request;
 - a reply to something the field server started.
 
+The same file guards the field server's transit address: ssh and ping to that address only, and
+nothing forwarded to or from the transit network.
+
 Everything else from a team VLAN is dropped: the arena's web pages on port 8080 (on the FMS address and
 on the team gateway address), ssh, and any traffic to another team or the rest of the network. Other
 interfaces are not filtered, so the rules sit alongside firewalld. `freezy-firewall.service` loads the
@@ -110,7 +149,9 @@ with a count of dropped packets.
 ## Tests
 
 `python3 -m unittest deploy/host/test_freezy_net_helper.py` runs the helper against a fake playbook
-runner. The arena side is covered by `network/unifiswitch_test.go`.
+runner, `python3 -m unittest deploy/jump/test_freezy_transit_select.py` covers the choice of transit
+network, and `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
+machine's network cards. The arena side is covered by `network/unifiswitch_test.go`.
 
 `deploy/host/test_freezy_firewall.sh` sends real packets through the filter inside a private network
 namespace (no root needed, nothing on the machine changes). It checks each path is open without the

@@ -1,5 +1,6 @@
 # Written by host_setup.yaml from vars.yaml. Do not edit; change vars.yaml and run the setup again.
 define team_vlans = { {% for v in freezy_team_vlans %}"{{ v.connection }}"{{ ", " if not loop.last }}{% endfor %} }
+define transit_ifs = { "{{ freezy_transit_connection }}" }
 define fms_address = {{ freezy_fms_address }}
 define fms_network = {{ freezy_fms_network }}
 define team_gateway_host = 0.0.0.{{ freezy_gateway_host }}

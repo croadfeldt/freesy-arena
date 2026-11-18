@@ -3,8 +3,9 @@
 #
 #   ansible-playbook -i localhost, -c local deploy/host/ansible/host_setup.yaml
 #
-# It installs the host network helper, the per-match playbook and the team VLAN filter, creates any of
-# the six team VLAN connections that do not exist yet, and enables the services. See ../README.md.
+# It installs the host network helper, the per-match playbook and the team VLAN filter, and enables the
+# services. Run host_network.yaml first: it creates the interfaces this playbook checks for. See
+# ../README.md.
 #
 # It installs no packages and leaves alone the FMS address, existing connections, and any other
 # firewall on the host. It stops before changing anything if the host is not ready.
@@ -59,15 +60,9 @@
       changed_when: false
       tags: host
 
-    - name: List the NetworkManager connections
-      ansible.builtin.command: nmcli -g NAME connection show
-      register: freezy_connections
-      changed_when: false
-      tags: host
-
-    # A connection that already exists is kept as it is, but it has to be the VLAN vars.yaml says it is:
-    # the per-match step and Kea both use the connection name as the interface name.
-    - name: Read the team VLAN connections that already exist
+    # The per-match step and Kea both use the connection name as the interface name, so each team VLAN
+    # has to exist and be the VLAN vars.yaml says it is. host_network.yaml creates them.
+    - name: Check the six team VLAN connections exist
       ansible.builtin.command: >-
         nmcli -g connection.type,connection.interface-name,vlan.id connection show {{ item.connection }}
       register: freezy_existing
@@ -75,7 +70,6 @@
       failed_when: >-
         freezy_existing.rc != 0
         or freezy_existing.stdout_lines != ['vlan', item.connection, item.vlan | string]
-      when: item.connection in freezy_connections.stdout_lines
       loop: "{{ freezy_team_vlans }}"
       loop_control:
         label: "{{ item.station }}"
@@ -120,7 +114,7 @@
       loop_control:
         label: "{{ item.dest }}"
       register: freezy_installed
-      tags: files
+      tags: [files, usr]
 
     - name: Install the spool directory definition for the arena's account
       ansible.builtin.copy:
@@ -131,7 +125,7 @@
         owner: root
         group: root
         mode: "0644"
-      tags: files
+      tags: [files, usr]
 
     # nft checks the whole rule set with these values before the file is replaced.
     - name: Write the team VLAN filter's variables
@@ -147,7 +141,7 @@
       register: freezy_filter_vars
       tags: files
 
-    # ---- The host itself. The filter goes in first, before any new team VLAN exists. ----
+    # ---- The host itself. ----
 
     - name: Reload systemd
       ansible.builtin.systemd:
@@ -159,23 +153,12 @@
         name: freezy-firewall.service
         enabled: true
         state: >-
-          {{ 'reloaded' if (freezy_filter_vars.changed or freezy_installed.changed) else 'started' }}
+          {{ 'reloaded' if (freezy_filter_vars.changed or (freezy_installed.changed | default(false))) else 'started' }}
       tags: host
 
     - name: Check the filter is loaded
       ansible.builtin.command: nft list table inet freezy_field
       changed_when: false
-      tags: host
-
-    - name: Create the team VLAN connections that are missing
-      ansible.builtin.command: >-
-        nmcli connection add type vlan con-name {{ item.connection }} ifname {{ item.connection }}
-        dev {{ freezy_field_interface }} id {{ item.vlan }}
-        ipv4.method disabled ipv6.method disabled connection.autoconnect yes
-      when: item.connection not in freezy_connections.stdout_lines
-      loop: "{{ freezy_team_vlans }}"
-      loop_control:
-        label: "{{ item.station }}"
       tags: host
 
     - name: Create the spool directories

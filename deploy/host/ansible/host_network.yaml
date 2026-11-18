@@ -1,0 +1,176 @@
+# The field server's network interfaces, from nothing. Run it as root on the field server before
+# host_setup.yaml, and again whenever vars.yaml changes:
+#
+#   ansible-playbook -i localhost, -c local deploy/host/ansible/host_network.yaml
+#
+# The field server uses one network interface. This playbook makes sure that:
+#
+#   - the interface itself has no IPv4 or IPv6 address;
+#   - the venue, transit and admin VLANs exist on top of it, with no address: the jump virtual
+#     machines attach to them (jump_vms.yaml);
+#   - the field server's own address (the FMS address) is on a macvlan on top of the admin VLAN;
+#   - the field server has an ssh-only address on the transit VLAN, the way in from the jump machine;
+#   - the six team VLANs exist on top of it, with no address until a match assigns one.
+#
+# It creates what is missing. What already exists is checked, not rebuilt: if the macvlan or a VLAN
+# exists but is not what vars.yaml describes, the playbook stops and says so, because rebuilding the
+# connection that carries the FMS address would cut off the arena and anyone logged in. The only live
+# change it makes is removing addresses from the interface itself, which does not interrupt the
+# macvlan or the VLANs.
+- name: Set up the field server's network interfaces
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars.yaml
+  vars:
+    freezy_fms_cidr: "{{ freezy_fms_address }}/{{ freezy_fms_prefix_length }}"
+    freezy_all_vlans: "{{ freezy_uplink_vlans + freezy_team_vlans }}"
+  tasks:
+    - name: Load host overrides, if any
+      ansible.builtin.include_vars:
+        file: /etc/freezy-net/vars.yaml
+      when: "'/etc/freezy-net/vars.yaml' is file"
+
+    - name: Check the interface exists
+      ansible.builtin.command: ip link show {{ freezy_field_interface }}
+      changed_when: false
+
+    - name: List the NetworkManager connections
+      ansible.builtin.command: nmcli -g NAME connection show
+      register: freezy_connections
+      changed_when: false
+
+    # ---- Checks on what already exists. Nothing is changed until these pass. ----
+
+    - name: Check the existing FMS macvlan is the one described
+      ansible.builtin.command: >-
+        nmcli -g connection.type,connection.interface-name,macvlan.parent,ipv4.method,ipv4.addresses
+        connection show {{ freezy_fms_connection }}
+      register: freezy_macvlan
+      changed_when: false
+      failed_when: >-
+        freezy_macvlan.rc != 0 or freezy_macvlan.stdout_lines[:4]
+        != ['macvlan', freezy_fms_connection, freezy_fms_parent, 'manual']
+        or freezy_fms_cidr not in (freezy_macvlan.stdout_lines[4] | default('')).split(', ')
+      when: freezy_fms_connection in freezy_connections.stdout_lines
+
+    - name: Check the existing VLANs are the ones described
+      ansible.builtin.command: >-
+        nmcli -g connection.type,connection.interface-name,vlan.parent,vlan.id
+        connection show {{ item.connection }}
+      register: freezy_vlan
+      changed_when: false
+      failed_when: >-
+        freezy_vlan.rc != 0 or freezy_vlan.stdout_lines
+        != ['vlan', item.connection, freezy_field_interface, item.vlan | string]
+      when: item.connection in freezy_connections.stdout_lines
+      loop: "{{ freezy_all_vlans }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    # ---- The interface itself: no IPv4, no IPv6. ----
+
+    # By UUID: a fresh install names it something like "Wired connection 1", and names can repeat.
+    - name: Find the connection that is active on the interface
+      ansible.builtin.command: nmcli -g GENERAL.CON-UUID device show {{ freezy_field_interface }}
+      register: freezy_nic_connection
+      changed_when: false
+
+    - name: Create a connection for the interface, with no addresses
+      ansible.builtin.command: >-
+        nmcli connection add type ethernet con-name {{ freezy_field_interface }}
+        ifname {{ freezy_field_interface }} connection.autoconnect yes
+        ipv4.method disabled ipv6.method disabled
+      when: freezy_nic_connection.stdout == ''
+
+    - name: Read the interface's address settings
+      ansible.builtin.command: >-
+        nmcli -g ipv4.method,ipv6.method connection show {{ freezy_nic_connection.stdout }}
+      register: freezy_nic_methods
+      changed_when: false
+      when: freezy_nic_connection.stdout != ''
+
+    # `device reapply` changes the addresses in place; the macvlan, the VLANs and any virtual machine
+    # attached to the interface stay up.
+    - name: Remove IPv4 and IPv6 from the interface
+      ansible.builtin.shell: |
+        nmcli connection modify {{ freezy_nic_connection.stdout }} \
+          ipv4.method disabled ipv4.addresses "" ipv4.gateway "" ipv6.method disabled ipv6.addresses "" \
+          && nmcli device reapply {{ freezy_field_interface }}
+      when:
+        - freezy_nic_connection.stdout != ''
+        - freezy_nic_methods.stdout_lines != ['disabled', 'disabled']
+
+    # ---- The VLANs. None gets an address here; the per-match step addresses the team VLANs. ----
+
+    - name: Create the VLANs that are missing
+      ansible.builtin.command: >-
+        nmcli connection add type vlan con-name {{ item.connection }} ifname {{ item.connection }}
+        dev {{ freezy_field_interface }} id {{ item.vlan }}
+        ipv4.method disabled ipv6.method disabled connection.autoconnect yes
+      when: item.connection not in freezy_connections.stdout_lines
+      loop: "{{ freezy_all_vlans }}"
+      loop_control:
+        label: "{{ item.connection }}"
+
+    # ---- The macvlan that carries the field server's address, on the admin VLAN. ----
+
+    - name: Create the FMS macvlan
+      ansible.builtin.command: >-
+        nmcli connection add type macvlan con-name {{ freezy_fms_connection }}
+        ifname {{ freezy_fms_connection }} dev {{ freezy_fms_parent }} mode bridge tap no
+        connection.autoconnect yes
+        ipv4.method manual ipv4.addresses {{ freezy_fms_cidr }}
+        ipv4.gateway "{{ freezy_fms_gateway }}" ipv4.dns "{{ freezy_fms_dns | join(',') }}"
+        ipv6.method disabled
+      when: freezy_fms_connection not in freezy_connections.stdout_lines
+
+    # ---- The way in: an address on the transit VLAN, handed out by the jump machine. It never brings
+    # a default route or DNS with it, and the team VLAN filter limits it to ssh and ping. ----
+
+    - name: Create the transit address
+      ansible.builtin.command: >-
+        nmcli connection add type macvlan con-name {{ freezy_transit_connection }}
+        ifname {{ freezy_transit_connection }} dev {{ freezy_transit_parent }} mode bridge tap no
+        connection.autoconnect yes connection.autoconnect-retries 0
+        ipv4.method auto ipv4.dhcp-client-id {{ freezy_transit_client_id }}
+        ipv4.never-default yes ipv4.ignore-auto-dns yes ipv4.ignore-auto-routes yes
+        ipv4.may-fail yes ipv4.dhcp-timeout infinity
+        ipv6.method disabled
+      when:
+        - freezy_transit_enabled | bool
+        - freezy_transit_connection not in freezy_connections.stdout_lines
+
+    # Its address arrives from the jump machine whenever that is running, so there is nothing to wait
+    # for here; the connection keeps asking until it gets one.
+
+    # ---- Prove the result on the running system, not just in the settings. ----
+
+    - name: Check the interface has no address
+      ansible.builtin.command: ip -o addr show dev {{ freezy_field_interface }}
+      register: freezy_nic_addresses
+      changed_when: false
+      until: freezy_nic_addresses.stdout == ''
+      retries: 5
+      delay: 1
+
+    - name: Check the FMS address is up on the macvlan
+      ansible.builtin.command: ip -4 -o addr show dev {{ freezy_fms_connection }}
+      register: freezy_fms_up
+      changed_when: false
+      until: (' ' ~ freezy_fms_cidr ~ ' ') in freezy_fms_up.stdout
+      retries: 10
+      delay: 1
+
+    - name: Check every VLAN interface is there
+      ansible.builtin.command: ip link show {{ item.connection }}
+      changed_when: false
+      register: freezy_vlan_up
+      until: freezy_vlan_up.rc == 0
+      retries: 10
+      delay: 1
+      loop: "{{ freezy_all_vlans }}"
+      loop_control:
+        label: "{{ item.connection }}"
