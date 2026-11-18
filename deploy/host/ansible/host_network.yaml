@@ -87,21 +87,23 @@
 
     - name: Read the interface's address settings
       ansible.builtin.command: >-
-        nmcli -g ipv4.method,ipv6.method connection show {{ freezy_nic_connection.stdout }}
+        nmcli -g ipv4.method,ipv4.routes,ipv6.method,ipv6.routes connection show {{ freezy_nic_connection.stdout }}
       register: freezy_nic_methods
       changed_when: false
       when: freezy_nic_connection.stdout != ''
 
-    # `device reapply` changes the addresses in place; the macvlan, the VLANs and any virtual machine
+    # Routes go too: a static route left on the interface would send traffic out untagged, past the
+    # UniFi gateway. `device reapply` changes the addresses in place; the macvlan, the VLANs and any virtual machine
     # attached to the interface stay up.
-    - name: Remove IPv4 and IPv6 from the interface
+    - name: Remove IPv4 and IPv6 addresses and routes from the interface
       ansible.builtin.shell: |
         nmcli connection modify {{ freezy_nic_connection.stdout }} \
-          ipv4.method disabled ipv4.addresses "" ipv4.gateway "" ipv6.method disabled ipv6.addresses "" \
+          ipv4.method disabled ipv4.addresses "" ipv4.gateway "" ipv4.routes "" \
+          ipv6.method disabled ipv6.addresses "" ipv6.routes "" \
           && nmcli device reapply {{ freezy_field_interface }}
       when:
         - freezy_nic_connection.stdout != ''
-        - freezy_nic_methods.stdout_lines != ['disabled', 'disabled']
+        - (freezy_nic_methods.stdout_lines + ['', '', '', ''])[:4] != ['disabled', '', 'disabled', '']
 
     # ---- The VLANs. None gets an address here; the per-match step addresses the team VLANs. ----
 
@@ -153,6 +155,14 @@
       register: freezy_nic_addresses
       changed_when: false
       until: freezy_nic_addresses.stdout == ''
+      retries: 5
+      delay: 1
+
+    - name: Check nothing is routed out of the bare interface
+      ansible.builtin.shell: ip -4 -o route show dev {{ freezy_field_interface }}; ip -6 -o route show dev {{ freezy_field_interface }}
+      register: freezy_nic_routes
+      changed_when: false
+      until: freezy_nic_routes.stdout == ''
       retries: 5
       delay: 1
 
