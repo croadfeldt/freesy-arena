@@ -140,13 +140,36 @@
         ipv4.method auto ipv4.dhcp-client-id {{ freezy_transit_client_id }}
         ipv4.never-default yes ipv4.ignore-auto-dns yes ipv4.ignore-auto-routes yes
         ipv4.may-fail yes ipv4.dhcp-timeout infinity
-        ipv6.method disabled
+        ipv6.method link-local
       when:
         - freezy_transit_enabled | bool
         - freezy_transit_connection not in freezy_connections.stdout_lines
 
     # Its address arrives from the jump machine whenever that is running, so there is nothing to wait
     # for here; the connection keeps asking until it gets one.
+    #
+    # At boot the jump machine starts after the field server's network, so that address is a couple of
+    # minutes away. With IPv6 off the connection would count as "still starting" all that time, and the
+    # whole boot (the arena included) would wait a minute for it and record a failure. A link-local
+    # IPv6 address is ready at once and lets the connection count as up while it keeps asking for its
+    # IPv4 address. Nothing is routed over it, and the team VLAN filter still allows only ssh in.
+    - name: Read the transit address's IPv6 setting
+      ansible.builtin.command: nmcli -g ipv6.method connection show {{ freezy_transit_connection }}
+      register: freezy_transit_ipv6
+      changed_when: false
+      when:
+        - freezy_transit_enabled | bool
+        - freezy_transit_connection in freezy_connections.stdout_lines
+
+    # Changed in the settings only; it takes effect the next time the connection comes up, so a
+    # session arriving over this address is not cut.
+    - name: Let the transit address count as up before its IPv4 address arrives
+      ansible.builtin.command: >-
+        nmcli connection modify {{ freezy_transit_connection }} ipv6.method link-local
+      when:
+        - freezy_transit_enabled | bool
+        - freezy_transit_connection in freezy_connections.stdout_lines
+        - freezy_transit_ipv6.stdout != 'link-local'
 
     # ---- Prove the result on the running system, not just in the settings. ----
 
