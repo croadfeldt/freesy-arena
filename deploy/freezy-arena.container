@@ -14,12 +14,17 @@
 
 [Unit]
 Description=Freezy Arena (rootless container)
+# Keep trying: a field server that gives up on the arena after a few quick failures stays down until
+# someone logs in.
+StartLimitIntervalSec=0
 
 [Container]
 ContainerName=freezy-arena
 Image=localhost/freezy-arena:latest
 Network=host
-Volume=freezy-arena-data:/data
+# `z` puts the shared container label on everything in the volume at each start, so a file left with
+# another container's private label cannot stop the arena from starting.
+Volume=freezy-arena-data:/data:z
 # Spool shared with the root-owned host network helper (deploy/host/). The arena writes requests and
 # reads results; it has no other way to change the host's network.
 Volume=/run/freezy-net/request:/run/freezy-net/request:z
@@ -28,6 +33,7 @@ Timezone=local
 
 [Service]
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=default.target

@@ -7,5 +7,8 @@
 # exist only in the volume (uploads, downloaded avatars) are left alone.
 set -e
 mkdir -p /data/img /data/db /data/logs
-cp -a /app/static/img.dist/. /data/img/
+# Copy contents, modes and times only. `cp -a` would also copy each file's SELinux label, and inside a
+# container that label is private to this one container: the next container (after a restart or a
+# reboot) could not read the directory and would fail to start.
+cp -r --preserve=mode,timestamps /app/static/img.dist/. /data/img/
 exec /app/cheesy-arena "$@"
