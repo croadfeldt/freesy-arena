@@ -19,7 +19,8 @@ here change:
 `NETWORK.md` has the full map. The field server uses one network interface (`freezy_field_interface`
 in `ansible/vars.yaml`), which gets no address of its own. On top of it the playbook puts the venue,
 transit and admin VLANs (999, 998, 100) with no address, a macvlan on the admin VLAN carrying the FMS
-address, and the six team VLANs with no address until a match assigns one.
+address, an ssh-only address on the transit VLAN (the way in from the jump machine), and the six team
+VLANs with no address until a match assigns one.
 
 The playbook creates whatever is missing, so it builds this from a fresh install. What already exists
 is checked and never rebuilt: if the macvlan or a VLAN is not what `vars.yaml` describes, the playbook
@@ -27,27 +28,23 @@ stops and says so, because rebuilding the connection that carries the FMS addres
 arena and anyone logged in. The one live change it makes is removing addresses from the interface
 itself, which leaves the macvlan and the VLANs up.
 
-### The jump virtual machines (`jump_vms.yaml`)
+### The jump virtual machine (`jump_vms.yaml`, `jump_vm.yaml`)
 
-Points each jump machine's two network cards at its VLAN interfaces: the external machine on transit
-and venue, the internal one on admin and transit. Set the machines' names in `/etc/freezy-net/vars.yaml`
-(`freezy_jump_vms`). The cards keep their MAC addresses, so the settings inside the machines still
-apply. Only the saved definition changes; a running machine picks it up the next time it is shut down
-and started, and the playbook lists the machines still waiting for that.
+`jump_vms.yaml` runs on the field server and points the jump machine's two network cards at the
+transit and venue VLAN interfaces. Set the machine's name in `/etc/freezy-net/vars.yaml`
+(`freezy_jump_vms`). The cards keep their MAC addresses. Only the saved definition changes; a running
+machine picks it up the next time it is shut down and started, and the playbook says if it is still
+waiting for that.
 
-### Inside the jump virtual machines (`jump_vm.yaml`)
+`jump_vm.yaml` runs against the jump machine itself:
 
-Run against each machine, not on the field server:
+    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
 
-    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=external
-    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=internal
-
-It sets the machine's two addresses and its firewall: the outside card accepts only ssh and translates
-the address of everything leaving through it, the inside card accepts ssh and DNS, and nothing is
+It sets the machine's two addresses and its firewall: the venue side accepts only ssh and translates
+the address of everything leaving through it, the transit side accepts ssh and DNS, and nothing is
 forwarded inward. A setting that is already right is not touched, so it is safe to run over the
 connection it uses. It stops if a zone carries ports, port forwards or rich rules it does not manage,
-so a hand-made exception is noticed and not silently removed. `NETWORK.md` lists the rules and where
-each one is enforced.
+so a hand-made exception is noticed and not silently removed.
 
 ### The helper, the filter and Kea (`host_setup.yaml`)
 
@@ -129,6 +126,9 @@ connections to exist.
 - ping to the FMS network or to the team's own gateway;
 - a DHCP request;
 - a reply to something the field server started.
+
+The same file guards the field server's transit address: ssh and ping to that address only, and
+nothing forwarded to or from the transit network.
 
 Everything else from a team VLAN is dropped: the arena's web pages on port 8080 (on the FMS address and
 on the team gateway address), ssh, and any traffic to another team or the rest of the network. Other

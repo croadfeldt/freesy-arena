@@ -9,6 +9,7 @@
 #   - the venue, transit and admin VLANs exist on top of it, with no address: the jump virtual
 #     machines attach to them (jump_vms.yaml);
 #   - the field server's own address (the FMS address) is on a macvlan on top of the admin VLAN;
+#   - the field server has an ssh-only address on the transit VLAN, the way in from the jump machine;
 #   - the six team VLANs exist on top of it, with no address until a match assigns one.
 #
 # It creates what is missing. What already exists is checked, not rebuilt: if the macvlan or a VLAN
@@ -125,6 +126,29 @@
         ipv4.gateway "{{ freezy_fms_gateway }}" ipv4.dns "{{ freezy_fms_dns | join(',') }}"
         ipv6.method disabled
       when: freezy_fms_connection not in freezy_connections.stdout_lines
+
+    # ---- The way in: an address on the transit VLAN. Never a route to anywhere; the team VLAN filter
+    # limits it to ssh and ping. ----
+
+    - name: Create the transit address
+      ansible.builtin.command: >-
+        nmcli connection add type macvlan con-name {{ freezy_transit_connection }}
+        ifname {{ freezy_transit_connection }} dev {{ freezy_transit_parent }} mode bridge tap no
+        connection.autoconnect yes
+        ipv4.method manual ipv4.addresses {{ freezy_transit_address }} ipv4.never-default yes
+        ipv6.method disabled
+      when:
+        - freezy_transit_address | default('', true) | length > 0
+        - freezy_transit_connection not in freezy_connections.stdout_lines
+
+    - name: Check the transit address is up
+      ansible.builtin.command: ip -4 -o addr show dev {{ freezy_transit_connection }}
+      register: freezy_transit_up
+      changed_when: false
+      until: (' ' ~ freezy_transit_address ~ ' ') in freezy_transit_up.stdout
+      retries: 10
+      delay: 1
+      when: freezy_transit_address | default('', true) | length > 0
 
     # ---- Prove the result on the running system, not just in the settings. ----
 

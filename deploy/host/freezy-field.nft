@@ -7,8 +7,12 @@
 # Loaded by freezy-firewall.service. The interface names and addresses come from
 # freezy-field-vars.nft, which the host setup playbook writes from ansible/vars.yaml.
 #
-# The table only ever drops traffic that arrives on a team VLAN; other interfaces pass straight
-# through, so it sits alongside firewalld or any other rules on the host.
+# It also guards the field server's address on the transit network (the way in from the jump machine):
+# ssh and ping to the field server itself, nothing else, and the field server never passes traffic
+# between the transit network and anything else.
+#
+# Traffic on any other interface passes straight through, so the table sits alongside firewalld or any
+# other rules on the host.
 
 include "freezy-field-vars.nft"
 
@@ -18,6 +22,13 @@ delete table inet freezy_field
 table inet freezy_field {
     chain input {
         type filter hook input priority filter - 10; policy accept;
+
+        # Only the transit address itself answers here, not the field server's other addresses.
+        iifname $transit_ifs ip daddr != $transit_address counter drop
+        iifname $transit_ifs ct state established,related accept
+        iifname $transit_ifs tcp dport 22 accept
+        iifname $transit_ifs ip protocol icmp accept
+        iifname $transit_ifs counter drop
 
         iifname != $team_vlans accept
         ct state established,related accept
@@ -38,6 +49,9 @@ table inet freezy_field {
 
     chain forward {
         type filter hook forward priority filter - 10; policy accept;
+
+        iifname $transit_ifs counter drop
+        oifname $transit_ifs counter drop
 
         iifname != $team_vlans accept
         ct state established,related accept

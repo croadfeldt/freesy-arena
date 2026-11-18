@@ -1,95 +1,99 @@
-# Field server network map
+# Field network map
 
-How the field server, its two jump virtual machines and the field switch fit together, and which
-playbook builds each part. Everything here runs over one network interface on the field server, as
-VLANs on the field switch.
+How the venue, the jump virtual machine, the UniFi gear and the field server fit together, which rules
+apply where, and which playbook builds each part. The field server uses one network interface; everything
+runs over it as VLANs on the UniFi switches.
 
-## Why there are two jump machines
+## The idea
 
-The venue's network and the field's networks can use overlapping addresses. Two small virtual machines
-on the field server sit between them, each translating addresses (NAT) on the way out, so neither side
-ever sees the other's addresses. They are also the only way in from the venue side: ssh to the external
-machine, from there to the internal one, from there to the field server.
+- **The UniFi configuration never changes during an event.** The team VLANs are plain VLANs on the
+  switches, with no addresses or DHCP on the UniFi side. The field server is the gateway and DHCP server
+  for whichever six teams are on the field, and it is the only thing reconfigured per match.
+- **One jump virtual machine separates the venue from the field.** A venue's network can use the same
+  addresses as the field's (the UniFi management network is 10.0.0.0/24, and so are plenty of venues).
+  The jump machine translates addresses on the way out, so the UniFi gateway's WAN side only ever sees
+  the small transit network, never the venue.
+- **Everything else sits behind the UniFi gateway**, which routes the admin and management networks.
 
-## The VLANs
+## The networks
 
-| VLAN | What it is | Who is on it |
-|---|---|---|
-| 999 | Venue internet | external jump machine |
-| 998 | Transit, 192.168.254.248/29: the field side's "internet" | external and internal jump machines, the UniFi gateway's WAN port |
-| 100 | Admin network, 10.0.100.0/24 (FMS, switch, access point) | internal jump machine, the field server |
-| 10, 20, 30, 40, 50, 60 | Team networks for red 1 to 3 and blue 1 to 3 | the field server; one team's driver station and robot each |
-| UniFi management | 10.0.0.0/24, the network the UniFi switches and access points are managed on | the UniFi gateway's LAN side and the UniFi devices |
+| VLAN | Network | What it is | Routed by |
+|---|---|---|---|
+| 999 | from the venue (DHCP) | venue internet | the venue |
+| 998 | 192.168.254.248/29 | transit: the field side's "internet" | jump machine (.254) |
+| 100 | 10.0.100.0/24 | admin: FMS, field equipment | UniFi gateway (10.0.100.1) |
+| UniFi management | 10.0.0.0/24 | UniFi switches and access points | UniFi gateway |
+| 10, 20, 30, 40, 50, 60 | `10.TE.AM.0/24` per match | red 1 to 3, blue 1 to 3: one team's driver station and robot | field server (`10.TE.AM.4`); VLAN-only on UniFi |
 
 ```
 venue internet
      │ VLAN 999
-┌────┴─────────────────┐
-│ external jump machine│  NAT out to the venue; ssh in
-└────┬─────────────────┘
-     │ VLAN 998 (transit) ───── UniFi gateway WAN ── UniFi management, 10.0.0.0/24
-┌────┴─────────────────┐
-│ internal jump machine│  NAT out to transit; gateway and DNS for the admin network
-└────┬─────────────────┘
-     │ VLAN 100 (admin, 10.0.100.0/24)
-┌────┴─────────────────┐
-│ field server         │  10.0.100.5: arena, team gateways, DHCP, team VLAN filter
-└────┬─────────────────┘
-     │ VLANs 10 to 60, one per driver station position
-   teams
+┌────┴───────────┐
+│ jump machine   │ 192.168.254.254 · NAT out, ssh in, DNS for the transit network
+└────┬───────────┘
+     │ VLAN 998 (transit) ──────────────── field server, 192.168.254.253 (ssh only)
+┌────┴───────────┐
+│ UniFi gateway  │ WAN on transit · routes admin and management · NAT out
+└────┬───────────┘
+     ├── UniFi management, 10.0.0.0/24 ── switches, access points
+     └── VLAN 100 (admin), 10.0.100.0/24
+              │
+        ┌─────┴────────┐
+        │ field server │ 10.0.100.5: arena · team gateways, DHCP and filter
+        └─────┬────────┘
+              │ VLANs 10 to 60 (plain VLANs on the switches)
+            teams
 ```
-
-## The UniFi management network
-
-The UniFi switches and access points are managed on 10.0.0.0/24, behind the UniFi gateway. That
-gateway's WAN port is on the transit VLAN, so the management network reaches the internet the same way
-the admin network does: out through the external jump machine, which translates its address. This is
-what lets the UniFi gear reach its controller and updates.
-
-For that to work the gateway's WAN port needs a fixed address in the transit network (192.168.254.249
-to .252 are free), with 192.168.254.254 as its gateway and DNS server; nothing on the transit network
-hands out addresses. The external jump machine already accepts DNS on that side and passes traffic
-outward.
-
-A venue may itself use 10.0.0.0/24. That is fine: the venue only ever sees the external jump machine's
-own address, which is the reason the jump machines exist.
 
 ## On the field server
 
 The physical interface has no address. Everything sits on top of it:
 
-| Connection | Type | Address on the field server | Used by |
+| Connection | Type | Address | Used for |
 |---|---|---|---|
 | the interface | ethernet | none | carries all the VLANs |
-| `vlan999` | VLAN 999 | none | external jump machine, card 2 |
-| `vlan998` | VLAN 998 | none | external jump machine, card 1; internal jump machine, card 2 |
-| `vlan100` | VLAN 100 | none | internal jump machine, card 1; parent of the macvlan |
+| `vlan999` | VLAN 999 | none | jump machine, card 2 |
+| `vlan998` | VLAN 998 | none | jump machine, card 1; parent of `cheesy_transit` |
+| `cheesy_transit` | macvlan on `vlan998` | 192.168.254.253/29, no default route | the way in: ssh from the jump machine |
+| `vlan100` | VLAN 100 | none | parent of `cheesy_macvlan` |
 | `cheesy_macvlan` | macvlan on `vlan100` | 10.0.100.5/24, gateway and DNS 10.0.100.1 | the arena |
-| `vlan10` to `vlan60` | VLANs 10 to 60 | `10.TE.AM.4/24` while that team is on the field, otherwise none | Kea DHCP, team VLAN filter |
+| `vlan10` to `vlan60` | VLANs 10 to 60 | `10.TE.AM.4/24` while that team is on the field, otherwise none | team gateway, Kea DHCP |
 
-The jump machines attach to their VLAN interfaces directly (macvtap). The field server's address is on a
-macvlan on the same `vlan100` interface as the internal jump machine's card, which is what lets the two
-talk to each other inside the field server: traffic between two different interfaces of one network
-card would have to leave and re-enter on the same switch port, and switches do not do that.
+Getting in from the venue is two hops: ssh to the jump machine, then ssh to 192.168.254.253. That path
+does not pass through the UniFi gateway, so the field server stays reachable when the UniFi side is
+down or misconfigured. The transit address accepts ssh and ping only, and the field server never passes
+traffic between the transit network and anything else.
 
-The field server has no address on the venue or transit VLANs, so it cannot be reached from the venue
-except through the jump machines.
+## Inside the jump machine
 
-## Inside the jump machines
+Built by `ansible/jump_vm.yaml`.
 
-Built by `ansible/jump_vm.yaml`, run once against each machine.
+| | |
+|---|---|
+| Outside card, VLAN 999 | address from the venue (DHCP); accepts ssh only |
+| Inside card, VLAN 998 | 192.168.254.254/29; accepts ssh and DNS |
+| Passing through | inside to outside only, address translated; nothing forwarded inward, no port forwards |
 
-| | External | Internal |
-|---|---|---|
-| Outside card (nearer the venue) | VLAN 999, address from the venue (DHCP) | VLAN 998, 192.168.254.253/29, default route and DNS 192.168.254.254 |
-| Inside card (nearer the field) | VLAN 998, 192.168.254.254/29 | VLAN 100, 10.0.100.1/24 |
-| Outside card accepts | ssh only | ssh only |
-| Inside card accepts | ssh, DNS | ssh, DNS |
-| Passing through | inside to outside only, address translated | inside to outside only, address translated |
-| Inbound port forwards | none | none |
+It also runs `dnscrypt-proxy` on its inside address, which the playbook does not configure yet.
 
-Neither machine serves DHCP; devices on the admin network have fixed addresses. Each machine also runs
-`dnscrypt-proxy` on its inside address, which the playbook does not configure yet.
+## On the UniFi side
+
+Not managed from this repository. It is set once and left alone:
+
+- **Gateway WAN**: a port on VLAN 998, fixed address in 192.168.254.249 to .252, gateway and DNS
+  192.168.254.254. Nothing on the transit network hands out addresses.
+- **Admin network**: VLAN 100, 10.0.100.0/24, gateway 10.0.100.1, no DHCP range that includes
+  10.0.100.5.
+- **Team VLANs 10 to 60**: VLAN-only networks. No gateway address, no DHCP, no DHCP guarding that would
+  block the field server's answers, no routes to team networks. If the gateway routed them, teams would
+  have a way out that bypasses the field server's filter.
+- **Field server port**: VLANs 999, 998, 100 and 10 to 60, all tagged. Venue uplink on a VLAN 999 port.
+- **Firewall rules on the gateway**: the WAN side keeps the default (nothing inbound). Between its own
+  networks the only rule the field needs is that the management network is not reachable from the admin
+  network except by whoever administers the UniFi gear. Team traffic never reaches the gateway, so it
+  needs no team rules.
+- **Driver station to robot ports**: see below. This is the one field rule that has to live on the
+  UniFi or radio side.
 
 ## The FRC field rules, and where each is enforced
 
@@ -98,13 +102,14 @@ the stock Cheesy Arena switch configuration (`switch_config.txt`).
 
 | Rule | Enforced by |
 |---|---|
-| A team VLAN holds only that team's robot and driver station, plus the FMS | the switch (one VLAN per station); the field server is the only other member |
+| A team VLAN holds only that team's robot and driver station, plus the FMS | the switches (one VLAN per station); the field server is the only other member |
 | A driver station reaches the FMS only for driver station traffic: UDP 1160 and TCP 1750 to 10.0.100.5, ping, DHCP | team VLAN filter on the field server (`freezy-field.nft`) |
 | The admin network is not reachable from robots and driver stations | team VLAN filter: everything else to the field server is dropped, and nothing is forwarded off a team VLAN |
 | Teams cannot reach each other | team VLAN filter: no forwarding between team VLANs |
-| Only the admin and UniFi management networks reach the venue's internet | team VLAN filter (teams are never forwarded), then the internal jump machine, which only passes traffic arriving on its admin card |
-| Nothing from the venue reaches the field | both jump machines: ssh to the machine itself is the only thing accepted from outside, and nothing is forwarded inward |
-| Between a driver station and its robot, only the published ports are open (below) | not the field server: that traffic stays inside the team's VLAN and never passes through it. On a FIRST field the field access point does this; here it is the job of the access point or radio configuration |
+| Only the admin and UniFi management networks reach the venue's internet | team VLAN filter (teams are never forwarded); the UniFi gateway routes only its own networks |
+| Nothing from the venue reaches the field | jump machine: ssh to the machine itself is all it accepts from outside, nothing is forwarded inward; then the UniFi gateway's WAN firewall |
+| The way in cannot be used as a way around | team VLAN filter: the transit address answers ssh and ping only, and nothing is forwarded to or from the transit network |
+| Between a driver station and its robot, only the published ports are open (below) | not the field server: that traffic stays inside the team's VLAN. On a FIRST field the field access point does this; here it is the access point or radio configuration |
 
 Ports open between a driver station and its robot, all both ways, everything else blocked. This is
 the list in the FMS whitepaper; the season's game manual has the authoritative one.
@@ -120,24 +125,17 @@ the list in the FMS whitepaper; the season's game manual has the authoritative o
 | 1250 | UDP and TCP | CTRE diagnostics |
 | 5800 to 5810 | UDP and TCP | team use |
 
-## What the field switch has to provide
-
-The port the field server plugs into must carry VLANs 999, 998, 100 and 10 to 60, all tagged. The venue's
-uplink goes into a port on VLAN 999, and the UniFi gateway's WAN port into a port on VLAN 998. The switch's own configuration is not managed from this repository.
-
 ## Which playbook builds what
 
-Run as root on the field server, in this order (details in `README.md`):
+| Step | Playbook | Where it runs | Builds |
+|---|---|---|---|
+| 1 | `ansible/host_network.yaml` | field server | the address-free interface, VLANs 999, 998, 100 and 10 to 60, the FMS macvlan and the transit address |
+| 2 | `ansible/jump_vms.yaml` | field server | the jump machine's two cards attached to VLANs 998 and 999 |
+| 3 | `ansible/jump_vm.yaml` | against the jump machine | the addresses and firewall inside it |
+| 4 | `ansible/host_setup.yaml` | field server | the host network helper, the team VLAN filter and the Kea container unit |
+| every match | `ansible/match_network.yaml` | field server, started by the arena | team gateway addresses and DHCP scopes for the six teams on the field |
 
-| Step | Playbook | Builds |
-|---|---|---|
-| 1 | `ansible/host_network.yaml` | the address-free interface, VLANs 999, 998, 100 and 10 to 60, and the macvlan with the FMS address |
-| 2 | `ansible/jump_vms.yaml` | each jump machine's two cards attached to its VLANs |
-| 3 | `ansible/jump_vm.yaml`, once per jump machine | the addresses and firewall inside each jump machine |
-| 4 | `ansible/host_setup.yaml` | the host network helper, the team VLAN filter and the Kea container unit |
-| every match | `ansible/match_network.yaml` | team gateway addresses and DHCP scopes for the six teams on the field |
-
-Not yet in a playbook: creating the jump machines themselves and their `dnscrypt-proxy` settings, the arena's
+Not yet in a playbook: creating the jump machine itself and its `dnscrypt-proxy` settings, the arena's
 account and container, and turning off libvirt's `default` network (its DHCP server holds the port Kea
 needs).
 

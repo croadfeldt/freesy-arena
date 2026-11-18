@@ -1,13 +1,12 @@
-# The settings inside a jump virtual machine: its two addresses and its firewall (see ../NETWORK.md).
-# Run it against one machine at a time, saying which of the two it is:
+# The settings inside the jump virtual machine: its two addresses and its firewall (see
+# ../NETWORK.md). Run it against the machine:
 #
-#   ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=external
-#   ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=internal
+#   ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
 #
 # For that machine it sets:
-#   - the outside card (nearer the venue): its address, in the firewall's `external` zone, which accepts
+#   - the outside card (the venue's network): its address, in the firewall's `external` zone, which accepts
 #     only ssh and translates the address of everything leaving through it;
-#   - the inside card (nearer the field): its address, in the `internal` zone, which accepts ssh and DNS;
+#   - the inside card (the transit network): its address, in the `internal` zone, which accepts ssh and DNS;
 #   - forwarding on, so the inside network can get out. Nothing is forwarded inward.
 #
 # It needs NetworkManager and firewalld on the machine and installs nothing. A setting that is already
@@ -20,6 +19,7 @@
   vars_files:
     - vars.yaml
   vars:
+    freezy_jump_role: external
     freezy_cards:
       - "{{ freezy_jump_roles[freezy_jump_role].outside | combine({'zone': 'external'}) }}"
       - "{{ freezy_jump_roles[freezy_jump_role].inside | combine({'zone': 'internal'}) }}"
@@ -30,7 +30,7 @@
     - name: Check which machine this is was given
       ansible.builtin.assert:
         that: freezy_jump_role | default('') in freezy_jump_roles
-        fail_msg: "Pass -e freezy_jump_role=external or -e freezy_jump_role=internal."
+        fail_msg: "freezy_jump_role must be one of the roles in vars.yaml."
 
     - name: Check the machine has what this needs
       ansible.builtin.shell: |
