@@ -1,0 +1,17 @@
+#!/usr/bin/bash
+# Make a container image out of a root filesystem carried in the operating system image:
+#
+#   freezy-image-import NAME ROOTFS.tar CHANGE...
+#
+# NAME is the image name (localhost/freezy-kea:latest); each CHANGE is an image setting such as
+# 'ENTRYPOINT ["/app/entrypoint.sh"]'. It does nothing if the image already carries the current stamp
+# (/usr/share/freezy-images/stamp), so it only does work on first boot and after an update.
+set -euo pipefail
+name=$1 tar=$2; shift 2
+stamp=$(cat /usr/share/freezy-images/stamp)
+have=$(podman image inspect --format '{{ index .Labels "freezy.stamp" }}' "$name" 2>/dev/null || true)
+[ "$have" != "$stamp" ] || exit 0
+args=(--change "LABEL freezy.stamp=$stamp")
+for change in "$@"; do args+=(--change "$change"); done
+podman import -q "${args[@]}" "$tar" "$name"
+podman image prune -f >/dev/null

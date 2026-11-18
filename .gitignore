@@ -31,4 +31,3 @@ _testmain.go
 static/logs
 static/img/avatars
 __pycache__/
-deploy/image/build/

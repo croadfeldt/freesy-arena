@@ -1,8 +1,0 @@
-.git
-.github
-*.db
-coverage
-static
-templates
-font
-schedules

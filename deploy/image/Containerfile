@@ -1,54 +1,50 @@
 # The field server as an image mode (bootc) system: the operating system, the arena's host pieces and
-# both container images in one image, so a field server is installed and updated as a whole and works
-# with no network at the venue. Build it with deploy/image/build.sh; see deploy/image/README.md.
-FROM quay.io/fedora/fedora-bootc:45
+# both containers in one image, so a field server is installed and updated as a whole and works with no
+# network at the venue. Everything is built here in one pass from the Fedora image mode base:
+#
+#   podman build -t localhost/freezy-field-server -f deploy/image/Containerfile .
+#
+# deploy/image/install.sh holds the list of what goes in. See deploy/image/README.md.
+ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:45
 
-# Virtual machines (the jump machine), Ansible for the network playbooks, the firewall, and a few tools.
-# libvirt's `default` network is deliberately not installed: its DHCP server would hold the port Kea needs.
-# Weak dependencies are left out: they pull in storage and network back ends the field server never uses.
-RUN dnf -y --setopt=install_weak_deps=False install libvirt-daemon-kvm libvirt-daemon-config-nwfilter \
-        libvirt-client qemu-img ansible-core nftables firewalld python3 tmux vim-enhanced rsync \
-    && dnf clean all && rm -rf /var/cache/* /var/log/dnf* /var/lib/dnf /run/dnf
-# Prove the install really landed. On some build stores (rootless podman on ZFS is one) the package
-# database and the SELinux policy store lose their updates while the files still arrive, which gives an
-# image that looks fine and is not. Stop the build if either happened.
-RUN rpm -q libvirt-daemon-kvm ansible-core firewalld nftables >/dev/null \
-    && test ! -e /etc/selinux/targeted/tmp && test ! -e /etc/selinux/targeted/previous
+# The arena: the same build as the repository's top-level Containerfile.
+FROM docker.io/library/golang:1.26 AS arena-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -tags timetzdata -o /out/cheesy-arena .
 
-# The host network helper, the team VLAN filter, the playbooks and the units, in the places
-# deploy/host/README.md lists. On a package-mode host host_setup.yaml copies these; here they are baked in.
-COPY deploy/host/freezy-net-helper /usr/libexec/freezy-net-helper
-COPY deploy/host/freezy-vm-interfaces /usr/share/freezy-vm-interfaces
-COPY deploy/host/freezy-net.path deploy/host/freezy-net.service deploy/host/freezy-firewall.service /usr/lib/systemd/system/
-COPY deploy/host/freezy-net.tmpfiles.conf /usr/lib/tmpfiles.d/freezy-net.conf
-COPY deploy/host/freezy-field.nft /usr/share/freezy-net/freezy-field.nft
-COPY deploy/host/ansible/ /usr/share/freezy-net/
-COPY deploy/host/freezy-kea.container /usr/share/containers/systemd/freezy-kea.container
-COPY deploy/freezy-arena.container /etc/containers/systemd/users/1001/freezy-arena.container
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS arena
+WORKDIR /app
+COPY --from=arena-build /out/cheesy-arena ./
+COPY templates ./templates
+COPY static ./static
+COPY schedules ./schedules
+COPY font ./font
+COPY deploy/container-entrypoint.sh /app/entrypoint.sh
+RUN mv static/img static/img.dist && ln -s /data/img static/img && ln -s /data/logs static/logs && ln -s /data/db db && ln -s /data/event.db event.db
 
-# The Kea and arena container images, carried inside this image and loaded at boot.
-COPY deploy/image/build/freezy-kea.tar deploy/image/build/freezy-arena.tar /usr/share/freezy-images/
+# Kea: the same build as deploy/kea/Containerfile.
+FROM registry.fedoraproject.org/fedora:45 AS kea
+RUN dnf -y install kea && dnf clean all && rm -rf /var/cache/dnf
 
-# The arena's account, boot-time units and settings.
-COPY deploy/image/files/ /
-# Site-specific files (host name, ssh keys, sudo rules, /etc/freezy-net/vars.yaml). Empty unless
-# build.sh is given a site directory; they are never part of this repository.
-COPY deploy/image/build/site/ /
+# Both containers' root filesystems as archives, to carry inside the operating system image.
+FROM registry.fedoraproject.org/fedora:45 AS pack
+COPY --from=arena / /rootfs/arena
+COPY --from=kea / /rootfs/kea
+RUN mkdir /out \
+    && tar -C /rootfs/arena --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-arena-rootfs.tar . \
+    && tar -C /rootfs/kea --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-kea-rootfs.tar .
 
-# COPY keeps the build context's modes; make sure nothing shipped is group- or world-writable.
-RUN chmod -R go-w /usr/libexec/freezy-net-helper /usr/share/freezy-net /usr/share/freezy-vm-interfaces \
-        /usr/share/freezy-images /usr/share/containers/systemd /etc/containers/systemd \
-        /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf /usr/lib/tmpfiles.d/freezy-image.conf \
-        /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests \
-    && chmod 0755 /usr/libexec/freezy-net-helper /usr/share/freezy-vm-interfaces
+FROM ${BASE_IMAGE}
+RUN --mount=type=bind,target=/src \
+    --mount=type=bind,from=pack,source=/out,target=/images \
+    /src/deploy/image/install.sh /src /images
 
-# The arena's web port is closed to nothing here on purpose: the team VLAN filter decides what a team
-# can reach, and firewalld keeps its defaults for everything else plus the arena's ports.
-RUN firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp \
-    && systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
-        libvirt-guests.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
-        freezy-firewall.service freezy-net.path \
-    && systemctl --global enable freezy-arena-image.service
+# Site-specific files (host name, ssh keys, sudo rules, /etc/freezy-net/vars.yaml). Empty in this
+# repository; a site's own build adds its files on top.
+COPY deploy/image/site/ /
 
 # Fails the build if a unit, quadlet or bootc setting is malformed.
 RUN bootc container lint

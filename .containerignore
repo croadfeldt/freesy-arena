@@ -5,4 +5,3 @@ cheesy-arena
 coverage
 db
 static/logs
-deploy/*.container
