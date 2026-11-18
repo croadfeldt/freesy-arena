@@ -125,8 +125,8 @@ connections to exist.
 (`switch_config.txt`). Traffic arriving on a team VLAN is allowed only if it is:
 
 - UDP 1160 or TCP 1750 to the FMS address (driver station status and control);
-- ping to the FMS network or to the team's own gateway;
-- a DHCP request;
+- ping to the FMS network or to the team's own gateway (another team's gateway does not answer);
+- a DHCP request, broadcast or to the team's own gateway;
 - a reply to something the field server started.
 
 The same file guards the field server's transit address: ssh and ping to that address only, and

@@ -126,8 +126,8 @@ the stock Cheesy Arena switch configuration (`switch_config.txt`).
 |---|---|
 | A team VLAN holds only that team's robot and driver station, plus the FMS | the switches (one VLAN per station); the field server is the only other member |
 | A driver station reaches the FMS only for driver station traffic: UDP 1160 and TCP 1750 to 10.0.100.5, ping, DHCP | team VLAN filter on the field server (`freezy-field.nft`) |
-| The admin network is not reachable from robots and driver stations | team VLAN filter: everything else to the field server is dropped, and nothing is forwarded off a team VLAN |
-| Teams cannot reach each other | team VLAN filter: no forwarding between team VLANs |
+| The admin network is not reachable from robots and driver stations | team VLAN filter: everything else to the field server is dropped, and nothing but ping to the admin network is forwarded off a team VLAN |
+| Teams cannot reach each other | team VLAN filter: no forwarding between team VLANs, and a team's gateway address answers only its own VLAN |
 | Only the admin and UniFi management networks reach the venue's internet | team VLAN filter (teams are never forwarded); the UniFi gateway routes only its own networks |
 | Nothing from the venue reaches the field | jump machine: ssh to the machine itself is all it accepts from outside, nothing is forwarded inward; then the UniFi gateway's WAN firewall |
 | The way in cannot be used as a way around | team VLAN filter: the transit address answers ssh and ping only, and nothing is forwarded to or from the transit network |
