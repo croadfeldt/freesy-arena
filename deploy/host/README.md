@@ -35,6 +35,20 @@ and venue, the internal one on admin and transit. Set the machines' names in `/e
 apply. Only the saved definition changes; a running machine picks it up the next time it is shut down
 and started, and the playbook lists the machines still waiting for that.
 
+### Inside the jump virtual machines (`jump_vm.yaml`)
+
+Run against each machine, not on the field server:
+
+    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=external
+    ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml -e freezy_jump_role=internal
+
+It sets the machine's two addresses and its firewall: the outside card accepts only ssh and translates
+the address of everything leaving through it, the inside card accepts ssh and DNS, and nothing is
+forwarded inward. A setting that is already right is not touched, so it is safe to run over the
+connection it uses. It stops if a zone carries ports, port forwards or rich rules it does not manage,
+so a hand-made exception is noticed and not silently removed. `NETWORK.md` lists the rules and where
+each one is enforced.
+
 ### The helper, the filter and Kea (`host_setup.yaml`)
 
 Kea runs as a container, so the first command builds its image; nothing is installed on the host. The

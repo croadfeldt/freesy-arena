@@ -58,3 +58,21 @@ freezy_fms_network: 10.0.100.0/24
 freezy_kea_config: /etc/freezy-net/kea/kea-dhcp4.conf
 freezy_kea_service: freezy-kea.service
 freezy_kea_image: localhost/freezy-kea:latest
+
+# Inside the two jump virtual machines (jump_vm.yaml). `outside` is the card nearer the venue,
+# `inside` the card nearer the field. The interface names are the ones the machines use today.
+freezy_transit_prefix_length: 29
+freezy_jump_roles:
+  external:
+    outside: { ifname: eth1, connection: external, method: auto }
+    inside:  { ifname: eth0, connection: internal, method: manual, address: 192.168.254.254/29 }
+  internal:
+    outside: { ifname: eth1, connection: external, method: manual, address: 192.168.254.253/29,
+               gateway: 192.168.254.254, dns: 192.168.254.254 }
+    inside:  { ifname: eth0, connection: internal, method: manual, address: 10.0.100.1/24 }
+
+# What each side of a jump machine accepts for itself. Everything else addressed to the machine is
+# refused. Traffic passing through is only ever allowed from the inside card out to the outside card,
+# with its address translated; nothing is forwarded inward.
+freezy_jump_outside_services: [ssh]
+freezy_jump_inside_services: [ssh, dns]

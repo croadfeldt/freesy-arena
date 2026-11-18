@@ -61,18 +61,48 @@ except through the jump machines.
 
 ## Inside the jump machines
 
-These settings live inside the virtual machines and are not yet built by a playbook.
+Built by `ansible/jump_vm.yaml`, run once against each machine.
 
 | | External | Internal |
 |---|---|---|
-| Card 1 | VLAN 998, 192.168.254.254/29 | VLAN 100, 10.0.100.1/24 |
-| Card 2 | VLAN 999, address from the venue (DHCP) | VLAN 998, 192.168.254.253/29, default route to .254 |
-| Firewall zones | card 2 `external` (NAT, ssh only); card 1 `internal` | card 2 `external` (NAT, ssh only); card 1 `internal` |
-| Forwarding | on | on |
-| DNS | `dnscrypt-proxy` on the transit address | `dnscrypt-proxy` on the admin and transit addresses |
+| Outside card (nearer the venue) | VLAN 999, address from the venue (DHCP) | VLAN 998, 192.168.254.253/29, default route and DNS 192.168.254.254 |
+| Inside card (nearer the field) | VLAN 998, 192.168.254.254/29 | VLAN 100, 10.0.100.1/24 |
+| Outside card accepts | ssh only | ssh only |
+| Inside card accepts | ssh, DNS | ssh, DNS |
+| Passing through | inside to outside only, address translated | inside to outside only, address translated |
 | Inbound port forwards | none | none |
 
-Neither machine serves DHCP. Devices on the admin network have fixed addresses.
+Neither machine serves DHCP; devices on the admin network have fixed addresses. Each machine also runs
+`dnscrypt-proxy` on its inside address, which the playbook does not configure yet.
+
+## The FRC field rules, and where each is enforced
+
+The rules are the ones FIRST describes for its own fields (the FMS whitepaper) and the access list in
+the stock Cheesy Arena switch configuration (`switch_config.txt`).
+
+| Rule | Enforced by |
+|---|---|
+| A team VLAN holds only that team's robot and driver station, plus the FMS | the switch (one VLAN per station); the field server is the only other member |
+| A driver station reaches the FMS only for driver station traffic: UDP 1160 and TCP 1750 to 10.0.100.5, ping, DHCP | team VLAN filter on the field server (`freezy-field.nft`) |
+| The admin network is not reachable from robots and driver stations | team VLAN filter: everything else to the field server is dropped, and nothing is forwarded off a team VLAN |
+| Teams cannot reach each other | team VLAN filter: no forwarding between team VLANs |
+| Only the admin network reaches the venue's internet | team VLAN filter (teams are never forwarded), then the internal jump machine, which only passes traffic arriving on its admin card |
+| Nothing from the venue reaches the field | both jump machines: ssh to the machine itself is the only thing accepted from outside, and nothing is forwarded inward |
+| Between a driver station and its robot, only the published ports are open (below) | not the field server: that traffic stays inside the team's VLAN and never passes through it. On a FIRST field the field access point does this; here it is the job of the access point or radio configuration |
+
+Ports open between a driver station and its robot, all both ways, everything else blocked. This is
+the list in the FMS whitepaper; the season's game manual has the authoritative one.
+
+| Port | Protocol | Use |
+|---|---|---|
+| 1180 to 1190 | UDP and TCP | camera data |
+| 1735 | TCP | SmartDashboard |
+| 1130 | UDP | driver station to robot control |
+| 1140 | UDP | robot to driver station status |
+| 80, 443 | TCP | camera and web interfaces |
+| 554 | UDP and TCP | camera streaming (RTSP) |
+| 1250 | UDP and TCP | CTRE diagnostics |
+| 5800 to 5810 | UDP and TCP | team use |
 
 ## What the field switch has to provide
 
@@ -87,10 +117,11 @@ Run as root on the field server, in this order (details in `README.md`):
 |---|---|---|
 | 1 | `ansible/host_network.yaml` | the address-free interface, VLANs 999, 998, 100 and 10 to 60, and the macvlan with the FMS address |
 | 2 | `ansible/jump_vms.yaml` | each jump machine's two cards attached to its VLANs |
-| 3 | `ansible/host_setup.yaml` | the host network helper, the team VLAN filter and the Kea container unit |
+| 3 | `ansible/jump_vm.yaml`, once per jump machine | the addresses and firewall inside each jump machine |
+| 4 | `ansible/host_setup.yaml` | the host network helper, the team VLAN filter and the Kea container unit |
 | every match | `ansible/match_network.yaml` | team gateway addresses and DHCP scopes for the six teams on the field |
 
-Not yet in a playbook: creating the jump machines themselves and the settings inside them, the arena's
+Not yet in a playbook: creating the jump machines themselves and their `dnscrypt-proxy` settings, the arena's
 account and container, and turning off libvirt's `default` network (its DHCP server holds the port Kea
 needs).
 
