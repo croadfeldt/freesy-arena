@@ -68,7 +68,7 @@ are all in `ansible/vars.yaml`; override them in `/etc/freezy-net/vars.yaml`.
 1. When a match is loaded, the arena writes the six team numbers to
    `/run/freezy-net/request/teams.json` (`network/unifiswitch.go`).
 2. `freezy-net.path` sees the file change and starts `freezy-net.service`.
-3. The service runs `freezy-net-helper` as root. It validates the request (an id plus six entries, each
+3. The service loads the team VLAN filter again, then runs `freezy-net-helper` as root. It validates the request (an id plus six entries, each
    blank or a 1 to 5 digit team number) and runs the per-match playbook with those numbers.
 4. The helper writes its verdict to `/run/freezy-net/result/status.json`.
 5. The arena waits up to two minutes for a result carrying the same id. The switch status on the match

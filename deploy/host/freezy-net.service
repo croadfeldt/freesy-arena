@@ -2,9 +2,16 @@
 [Unit]
 Description=Apply Freezy Arena team networks
 After=network.target
+# The arena can ask many times in a few seconds (an operator stepping through matches, or a run of
+# rejected requests). Never let systemd's start limit stop this unit: that also fails freezy-net.path,
+# and then no later request is applied until someone resets it by hand.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
+# Load the team VLAN filter again before every change, so a filter that was removed by hand is back
+# before any team network is. If it cannot be loaded, no team network is applied.
+ExecStartPre=/usr/sbin/nft -I /etc/freezy-net -f /usr/share/freezy-net/freezy-field.nft
 ExecStart=/usr/libexec/freezy-net-helper
 # The helper reports failures to the arena itself; do not let a failed run block the next request.
 SuccessExitStatus=1

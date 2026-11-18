@@ -168,5 +168,27 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(["254", "1114"], applied)
 
 
+
+class UnitFileTest(unittest.TestCase):
+    """Settings in freezy-net.service that chaos testing on the field server showed are needed."""
+
+    def setUp(self):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freezy-net.service")
+        with open(path) as f:
+            self.lines = [line.strip() for line in f]
+
+    def test_start_limit_is_off(self):
+        # Ten rejected requests in four seconds hit the default limit (5 starts in 10 s). That failed
+        # freezy-net.path too, and a good request sent afterwards was never applied.
+        self.assertIn("StartLimitIntervalSec=0", self.lines)
+
+    def test_filter_is_loaded_before_the_helper_runs(self):
+        # With the filter table deleted by hand, loading a match brought the team networks up
+        # unfiltered.
+        pre = [line for line in self.lines if line.startswith("ExecStartPre=")]
+        self.assertEqual(len(pre), 1)
+        self.assertIn("freezy-field.nft", pre[0])
+        self.assertLess(self.lines.index(pre[0]), self.lines.index("ExecStart=/usr/libexec/freezy-net-helper"))
+
 if __name__ == "__main__":
     unittest.main()
