@@ -1,0 +1,13 @@
+# Loads the arena container image carried in the operating system image into the arena account's store.
+[Unit]
+Description=Load the Freezy Arena image
+ConditionUser=cheesy
+ConditionPathExists=/usr/share/freezy-images/freezy-arena.tar
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/podman load -q -i /usr/share/freezy-images/freezy-arena.tar
+
+[Install]
+WantedBy=default.target

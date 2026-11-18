@@ -1,0 +1,12 @@
+# Loads the Kea container image carried in the operating system image, so DHCP needs no registry.
+[Unit]
+Description=Load the Freezy Arena Kea image
+ConditionPathExists=/usr/share/freezy-images/freezy-kea.tar
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/podman load -q -i /usr/share/freezy-images/freezy-kea.tar
+
+[Install]
+WantedBy=multi-user.target

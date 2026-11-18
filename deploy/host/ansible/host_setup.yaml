@@ -114,7 +114,7 @@
       loop_control:
         label: "{{ item.dest }}"
       register: freezy_installed
-      tags: files
+      tags: [files, usr]
 
     - name: Install the spool directory definition for the arena's account
       ansible.builtin.copy:
@@ -125,7 +125,7 @@
         owner: root
         group: root
         mode: "0644"
-      tags: files
+      tags: [files, usr]
 
     # nft checks the whole rule set with these values before the file is replaced.
     - name: Write the team VLAN filter's variables
@@ -153,7 +153,7 @@
         name: freezy-firewall.service
         enabled: true
         state: >-
-          {{ 'reloaded' if (freezy_filter_vars.changed or freezy_installed.changed) else 'started' }}
+          {{ 'reloaded' if (freezy_filter_vars.changed or (freezy_installed.changed | default(false))) else 'started' }}
       tags: host
 
     - name: Check the filter is loaded
