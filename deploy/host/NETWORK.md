@@ -16,9 +16,10 @@ machine, from there to the internal one, from there to the field server.
 | VLAN | What it is | Who is on it |
 |---|---|---|
 | 999 | Venue internet | external jump machine |
-| 998 | Transit: the link between the two jump machines | external and internal jump machines |
+| 998 | Transit, 192.168.254.248/29: the field side's "internet" | external and internal jump machines, the UniFi gateway's WAN port |
 | 100 | Admin network, 10.0.100.0/24 (FMS, switch, access point) | internal jump machine, the field server |
 | 10, 20, 30, 40, 50, 60 | Team networks for red 1 to 3 and blue 1 to 3 | the field server; one team's driver station and robot each |
+| UniFi management | 10.0.0.0/24, the network the UniFi switches and access points are managed on | the UniFi gateway's LAN side and the UniFi devices |
 
 ```
 venue internet
@@ -26,7 +27,7 @@ venue internet
 ┌────┴─────────────────┐
 │ external jump machine│  NAT out to the venue; ssh in
 └────┬─────────────────┘
-     │ VLAN 998 (transit)
+     │ VLAN 998 (transit) ───── UniFi gateway WAN ── UniFi management, 10.0.0.0/24
 ┌────┴─────────────────┐
 │ internal jump machine│  NAT out to transit; gateway and DNS for the admin network
 └────┬─────────────────┘
@@ -37,6 +38,21 @@ venue internet
      │ VLANs 10 to 60, one per driver station position
    teams
 ```
+
+## The UniFi management network
+
+The UniFi switches and access points are managed on 10.0.0.0/24, behind the UniFi gateway. That
+gateway's WAN port is on the transit VLAN, so the management network reaches the internet the same way
+the admin network does: out through the external jump machine, which translates its address. This is
+what lets the UniFi gear reach its controller and updates.
+
+For that to work the gateway's WAN port needs a fixed address in the transit network (192.168.254.249
+to .252 are free), with 192.168.254.254 as its gateway and DNS server; nothing on the transit network
+hands out addresses. The external jump machine already accepts DNS on that side and passes traffic
+outward.
+
+A venue may itself use 10.0.0.0/24. That is fine: the venue only ever sees the external jump machine's
+own address, which is the reason the jump machines exist.
 
 ## On the field server
 
@@ -86,7 +102,7 @@ the stock Cheesy Arena switch configuration (`switch_config.txt`).
 | A driver station reaches the FMS only for driver station traffic: UDP 1160 and TCP 1750 to 10.0.100.5, ping, DHCP | team VLAN filter on the field server (`freezy-field.nft`) |
 | The admin network is not reachable from robots and driver stations | team VLAN filter: everything else to the field server is dropped, and nothing is forwarded off a team VLAN |
 | Teams cannot reach each other | team VLAN filter: no forwarding between team VLANs |
-| Only the admin network reaches the venue's internet | team VLAN filter (teams are never forwarded), then the internal jump machine, which only passes traffic arriving on its admin card |
+| Only the admin and UniFi management networks reach the venue's internet | team VLAN filter (teams are never forwarded), then the internal jump machine, which only passes traffic arriving on its admin card |
 | Nothing from the venue reaches the field | both jump machines: ssh to the machine itself is the only thing accepted from outside, and nothing is forwarded inward |
 | Between a driver station and its robot, only the published ports are open (below) | not the field server: that traffic stays inside the team's VLAN and never passes through it. On a FIRST field the field access point does this; here it is the job of the access point or radio configuration |
 
@@ -107,7 +123,7 @@ the list in the FMS whitepaper; the season's game manual has the authoritative o
 ## What the field switch has to provide
 
 The port the field server plugs into must carry VLANs 999, 998, 100 and 10 to 60, all tagged. The venue's
-uplink goes into a port on VLAN 999. The switch's own configuration is not managed from this repository.
+uplink goes into a port on VLAN 999, and the UniFi gateway's WAN port into a port on VLAN 998. The switch's own configuration is not managed from this repository.
 
 ## Which playbook builds what
 
