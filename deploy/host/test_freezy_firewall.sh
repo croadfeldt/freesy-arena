@@ -14,6 +14,8 @@ if [ "${FREEZY_FW_TEST_INNER:-}" != 1 ]; then
 fi
 
 here=$(cd "$(dirname "$0")" && pwd)
+# Stop the listeners started below when the test ends, so nothing is left running.
+trap 'kill $(jobs -p) 2>/dev/null' EXIT
 mount -t tmpfs tmpfs /run
 tmp=$(mktemp -d -p /run)
 cat > "$tmp/freezy-field-vars.nft" <<'VARS'
@@ -21,7 +23,6 @@ define team_vlans = { "vlan10", "vlan20" }
 define transit_ifs = { "cheesy_transit" }
 define fms_address = 10.0.100.5
 define fms_network = 10.0.100.0/24
-define team_gateway_host = 0.0.0.4
 VARS
 
 ip link set lo up
@@ -80,7 +81,7 @@ except OSError:
     sys.exit(1)
 PY
 python3 "$tmp/listen.py" tcp:0.0.0.0:8080 tcp:0.0.0.0:1750 tcp:0.0.0.0:22 \
-    udp:10.0.100.5:1160 udp:10.2.54.4:1160 udp:10.2.54.4:67 > "$tmp/l1" &
+    udp:10.0.100.5:1160 udp:10.2.54.4:1160 udp:10.2.54.4:67 udp:10.11.14.4:67 > "$tmp/l1" &
 ip netns exec ds2 python3 "$tmp/listen.py" tcp:0.0.0.0:8080 > "$tmp/l2" &
 ip netns exec ds1 python3 "$tmp/listen.py" tcp:0.0.0.0:1741 > "$tmp/l3" &
 for f in l1 l2 l3; do
@@ -109,7 +110,7 @@ import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(1.5)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 try:
-    s.bind(("0.0.0.0", 68)); s.sendto(b"hi", ("10.2.54.4", 67)); sys.exit(0 if s.recv(10) == b"ok" else 1)
+    s.bind(("0.0.0.0", 68)); s.sendto(b"hi", (sys.argv[1], 67)); sys.exit(0 if s.recv(10) == b"ok" else 1)
 except OSError:
     sys.exit(1)
 PY
@@ -124,13 +125,15 @@ run_checks() {
     check "$phase" open    "DS status packets, udp 1160 to the FMS address"     ds1 probe udp 10.0.100.5 1160
     check "$phase" open    "ping the FMS address"                               ds1 pingc 10.0.100.5
     check "$phase" open    "ping the team's own gateway"                        ds1 pingc 10.2.54.4
-    check "$phase" open    "DHCP request to the team gateway"                   ds1 dhcp
+    check "$phase" open    "DHCP request to the team gateway"                   ds1 dhcp 10.2.54.4
     check "$phase" open    "field server opens a connection to the DS"          probe tcp 10.2.54.20 1741
     check "$phase" $closed "arena web pages on the FMS address, tcp 8080"       ds1 probe tcp 10.0.100.5 8080
     check "$phase" $closed "arena web pages on the team gateway, tcp 8080"      ds1 probe tcp 10.2.54.4 8080
     check "$phase" $closed "ssh to the field server"                            ds1 probe tcp 10.0.100.5 22
     check "$phase" $closed "DS control port on the team gateway address"        ds1 probe tcp 10.2.54.4 1750
     check "$phase" $closed "udp 1160 on the team gateway address"               ds1 probe udp 10.2.54.4 1160
+    check "$phase" $closed "ping another team's gateway"                        ds1 pingc 10.11.14.4
+    check "$phase" $closed "DHCP request to another team's gateway"             ds1 dhcp 10.11.14.4
     check "$phase" $closed "ping another team's driver station"                 ds1 pingc 10.11.14.20
     check "$phase" $closed "connect to another team's driver station"           ds1 probe tcp 10.11.14.20 8080
     check "$phase" open    "jump machine: ssh to the field server"              jump probe tcp 192.168.254.253 22

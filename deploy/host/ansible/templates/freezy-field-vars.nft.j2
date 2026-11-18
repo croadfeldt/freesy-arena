@@ -3,4 +3,3 @@ define team_vlans = { {% for v in freezy_team_vlans %}"{{ v.connection }}"{{ ", 
 define transit_ifs = { "{{ freezy_transit_connection }}" }
 define fms_address = {{ freezy_fms_address }}
 define fms_network = {{ freezy_fms_network }}
-define team_gateway_host = 0.0.0.{{ freezy_gateway_host }}

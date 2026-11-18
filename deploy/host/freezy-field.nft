@@ -39,12 +39,14 @@ table inet freezy_field {
         ip daddr $fms_address udp dport 1160 accept
         ip daddr $fms_address tcp dport 1750 accept
 
-        # Ping to the FMS network and to the team's own gateway (10.TE.AM.4).
+        # Ping to the FMS network and to the team's own gateway (10.TE.AM.4). Every team's gateway is
+        # an address of this machine, so "own" means the address belongs to the interface the packet
+        # arrived on; another team's gateway does not answer.
         ip daddr $fms_network ip protocol icmp accept
-        ip daddr & 0.0.0.255 == $team_gateway_host ip protocol icmp accept
+        ip protocol icmp fib daddr . iif type local accept
 
-        # DHCP requests.
-        udp sport 68 udp dport 67 accept
+        # DHCP requests: broadcast, or to the team's own gateway.
+        udp sport 68 udp dport 67 fib daddr . iif type { local, broadcast } accept
 
         counter drop
     }
