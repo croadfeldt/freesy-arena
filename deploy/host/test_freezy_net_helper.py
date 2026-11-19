@@ -209,16 +209,18 @@ class MatchPlaybookTest(unittest.TestCase):
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ansible", "match_network.yaml")
         with open(path) as f:
             self.tasks = yaml.safe_load(f)[0]["tasks"]
-        self.names = [task["name"] for task in self.tasks]
-        self.change = next(task for task in self.tasks if "block" in task)
+        self.outer = next(task for task in self.tasks if "block" in task)
+        self.change = next(task for task in self.outer["block"] if "block" in task)
 
     def test_kea_configuration_is_checked_before_anything_changes(self):
-        stage = self.tasks[self.names.index("Stage and check the Kea configuration for this match")]
-        self.assertIn("kea-dhcp4 -t", " ".join(stage["ansible.builtin.template"]["validate"].split()).replace(
-            "/usr/sbin/kea-dhcp4 {{ freezy_kea_image }} -t", "kea-dhcp4 -t"))
-        self.assertLess(self.names.index(stage["name"]), self.tasks.index(self.change))
-        before = self.tasks[:self.tasks.index(self.change)]
+        stage = self.outer["block"][0]
+        self.assertIn("-t /tmp/kea-dhcp4.conf", stage["ansible.builtin.template"]["validate"])
+        self.assertLess(self.outer["block"].index(stage), self.outer["block"].index(self.change))
+        before = self.tasks[:self.tasks.index(self.outer)] + [stage]
         self.assertFalse([t["name"] for t in before if "nmcli connection modify" in str(t) or "systemd" in str(t)])
+
+    def test_staging_file_is_removed_however_the_run_ends(self):
+        self.assertIn("freezy_kea_staged.path", str(self.outer["always"]))
 
     def test_every_change_is_inside_the_block_that_rolls_back(self):
         changing = [task["name"] for task in self.change["block"]]
