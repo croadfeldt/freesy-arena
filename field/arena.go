@@ -106,6 +106,7 @@ type Arena struct {
 	breakDescription                  string
 	breakNextMatchName                string
 	preloadedTeams                    *[6]*model.Team
+	startingUp                        bool
 	NextFoulId                        int
 	DriverStationUdpSocket            *net.UDPConn
 	redWonAuto                        bool
@@ -160,9 +161,13 @@ func NewArena(dbPath string) (*Arena, error) {
 
 	arena.ScoringPanelRegistry.initialize()
 
-	// Load empty match as current.
+	// Load empty match as current. Leave the team networks as they are: after a restart of the arena or
+	// of the field server they still serve the last match that was loaded, so driver stations stay
+	// connected until the operator loads a match again.
 	arena.MatchState = PreMatch
+	arena.startingUp = true
 	arena.LoadTestMatch()
+	arena.startingUp = false
 	arena.LastMatchTimeSec = 0
 	arena.lastMatchState = -1
 
@@ -1120,6 +1125,10 @@ func (arena *Arena) setSCCEthernetEnabled(enabled bool) {
 
 // Asynchronously reconfigures the networking hardware for the new set of teams.
 func (arena *Arena) setupNetwork(teams [6]*model.Team, isPreload bool) {
+	if arena.startingUp {
+		return
+	}
+
 	if isPreload {
 		arena.preloadedTeams = &teams
 	} else if arena.preloadedTeams != nil {
