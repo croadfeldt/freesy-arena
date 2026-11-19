@@ -68,6 +68,18 @@
         label: "{{ item.station }}"
       tags: host
 
+    # The profile can say one thing and the interface another: a run that was killed after it changed
+    # the profiles but before it activated them leaves them apart. The live address decides whether a
+    # VLAN needs activating, so the next run repairs that.
+    - name: Read each team VLAN's live address
+      ansible.builtin.command: nmcli -g IP4.ADDRESS connection show {{ item.connection }}
+      register: freezy_live
+      changed_when: false
+      loop: "{{ freezy_stations }}"
+      loop_control:
+        label: "{{ item.station }}"
+      tags: host
+
     # Everything that can be checked without touching the field is checked first: Kea (from the same
     # image the service runs) reads the new configuration from a staging file. A configuration Kea
     # would refuse fails the run here, with the previous match's networks untouched.
@@ -116,12 +128,15 @@
                 label: "{{ item.item.station }}"
               tags: host
 
-            - name: Apply the changed addresses
-              ansible.builtin.command: nmcli connection up {{ item.item.item.connection }}
-              when: item.changed
-              loop: "{{ freezy_modified.results }}"
+            - name: Apply the addresses that changed or are not live
+              ansible.builtin.command: nmcli connection up {{ item.0.item.item.connection }}
+              when: >-
+                item.0.changed or (item.1.stdout | trim)
+                != ((item.0.item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24')
+                    if item.0.item.item.prefix else '')
+              loop: "{{ freezy_modified.results | zip(freezy_live.results) | list }}"
               loop_control:
-                label: "{{ item.item.item.station }}"
+                label: "{{ item.0.item.item.station }}"
               tags: host
 
             - name: Put the checked Kea configuration in place

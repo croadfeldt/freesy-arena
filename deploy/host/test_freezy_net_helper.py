@@ -228,6 +228,15 @@ class MatchPlaybookTest(unittest.TestCase):
         self.assertIn("Put the checked Kea configuration in place", changing)
         self.assertIn("Load the new configuration into Kea", changing)
 
+    def test_a_vlan_is_activated_when_its_live_address_is_wrong(self):
+        # On the field, a run killed between changing the profiles and activating them left five of
+        # six gateways on the old teams. The next load saw the profiles already right, activated
+        # nothing, and failed because Kea had no address to listen on.
+        self.assertIn("Read each team VLAN's live address", self.names)
+        apply = next(task for task in self.change["block"] if "nmcli connection up" in str(task))
+        self.assertIn("freezy_live", str(apply["loop"]))
+        self.assertIn("item.1.stdout", apply["when"])
+
     def test_a_failure_puts_addresses_and_kea_back_and_still_fails(self):
         rescue = [task["name"] for task in self.change["rescue"]]
         self.assertIn("Put each team VLAN's address back", rescue)
