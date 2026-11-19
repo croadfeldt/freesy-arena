@@ -9,6 +9,11 @@ a result file that the arena waits for.
 The request directory is writable by the arena's user, so nothing in it is trusted: the request is
 opened without following symlinks, size-limited, and accepted only if it is exactly an id plus six
 team numbers. The result directory is writable by root only.
+
+The helper keeps a copy of the last valid request under /var/lib. The request directory is on /run and
+is empty after a boot, so when the helper starts and finds no request it applies that copy again. A
+field server that lost power in the middle of a team change comes back with its gateways and DHCP
+agreeing with each other, without anyone loading a match.
 """
 
 import json
@@ -27,6 +32,7 @@ TIMEOUT_SEC = int(os.environ.get("FREEZY_NET_TIMEOUT", "90"))
 REQUEST_PATH = os.path.join(SPOOL_DIR, "request", "teams.json")
 RESULT_DIR = os.path.join(SPOOL_DIR, "result")
 RESULT_PATH = os.path.join(RESULT_DIR, "status.json")
+LAST_REQUEST_PATH = os.path.join(os.environ.get("FREEZY_NET_STATE", "/var/lib/freezy-net"), "last-request.json")
 
 MAX_REQUEST_BYTES = 4096
 MAX_MESSAGE_CHARS = 2000
@@ -38,10 +44,10 @@ class RequestError(Exception):
     """The request file is missing, unsafe to read, or not a valid request."""
 
 
-def read_request():
+def read_request(path=REQUEST_PATH):
     """Returns (id, team_numbers) from the request file, or raises RequestError."""
     try:
-        fd = os.open(REQUEST_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as e:
         raise RequestError(f"cannot open request: {e.strerror}")
     try:
@@ -71,6 +77,18 @@ def read_request():
         if not isinstance(team, str) or (team != "" and not TEAM_RE.match(team)):
             raise RequestError("each team number must be blank or 1 to 5 digits", request_id)
     return request_id, teams
+
+
+def remember(request_id, teams):
+    """Keeps the request for the next boot. Failing to keep it must not stop the request being applied."""
+    try:
+        directory = os.path.dirname(LAST_REQUEST_PATH)
+        fd, temp_path = tempfile.mkstemp(dir=directory, prefix=".last-request-")
+        with os.fdopen(fd, "w") as f:
+            json.dump({"id": request_id, "team_numbers": teams}, f)
+        os.replace(temp_path, LAST_REQUEST_PATH)
+    except OSError as e:
+        print(f"cannot remember the request for the next boot: {e.strerror}", file=sys.stderr)
 
 
 def write_result(request_id, state, message):
@@ -108,7 +126,26 @@ def apply(teams):
     return "ok", ""
 
 
+def run(request_id, teams):
+    """Applies one request and reports it. Returns True if it was applied."""
+    print(f"request {request_id}: teams {teams}")
+    state, message = apply(teams)
+    print(f"request {request_id}: {state} {message}".rstrip())
+    write_result(request_id, state, message)
+    return state == "ok"
+
+
 def main():
+    # Nothing has been asked since the boot: put the field back to the last request.
+    if not os.path.lexists(REQUEST_PATH):
+        try:
+            request_id, teams = read_request(LAST_REQUEST_PATH)
+        except RequestError as e:
+            print(f"no request, and none remembered: {e.args[0]}", file=sys.stderr)
+            return 1
+        print("no request since the boot; applying the last one again")
+        return 0 if run(request_id, teams) else 1
+
     # systemd does not queue a second trigger while this service is running, so keep going until the
     # request on disk is the one that was just answered.
     last_id = None
@@ -125,12 +162,9 @@ def main():
         if request_id == last_id:
             return 1 if failed else 0
 
-        print(f"request {request_id}: teams {teams}")
-        state, message = apply(teams)
-        print(f"request {request_id}: {state} {message}".rstrip())
-        write_result(request_id, state, message)
+        remember(request_id, teams)
+        failed = not run(request_id, teams)
         last_id = request_id
-        failed = state != "ok"
 
 
 if __name__ == "__main__":

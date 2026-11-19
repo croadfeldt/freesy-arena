@@ -43,6 +43,7 @@ class HelperTest(unittest.TestCase):
             FREEZY_NET_PLAYBOOK="/nonexistent/match_network.yaml",
             FAKE_LOG=self.log,
             FAKE_SPOOL=self.spool,
+            FREEZY_NET_STATE=self.dir.name,
         )
 
     def tearDown(self):
@@ -167,6 +168,33 @@ class HelperTest(unittest.TestCase):
         applied = [json.loads(arg)["team_numbers"][0] for arg in self.calls() if arg.startswith("{")]
         self.assertEqual(["254", "1114"], applied)
 
+    def test_applies_the_last_request_again_when_none_has_come_since_the_boot(self):
+        # On the field, a hard reset in the middle of a team change came back with the gateways on the
+        # new match and DHCP on the old one, and stayed that way until someone loaded a match.
+        self.write_request({"id": "before", "team_numbers": ["254", "", "1114", "", "", "10101"]})
+        self.assertEqual(0, self.run_helper().returncode)
+        os.remove(self.request_path())  # /run is empty after a boot
+        os.remove(self.log)
+
+        completed = self.run_helper()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        applied = [json.loads(arg)["team_numbers"] for arg in self.calls() if arg.startswith("{")]
+        self.assertEqual([["254", "", "1114", "", "", "10101"]], applied)
+        self.assertEqual({"id": "before", "state": "ok", "message": ""}, self.result())
+
+    def test_a_rejected_request_is_not_remembered(self):
+        self.write_request({"id": "good", "team_numbers": ["254", "", "", "", "", ""]})
+        self.run_helper()
+        self.write_request({"id": "bad", "team_numbers": ["254; reboot", "", "", "", "", ""]})
+        self.run_helper()
+        with open(os.path.join(self.dir.name, "last-request.json")) as f:
+            self.assertEqual("good", json.load(f)["id"])
+
+    def test_nothing_to_apply_on_a_first_boot(self):
+        completed = self.run_helper()
+        self.assertEqual(1, completed.returncode)
+        self.assertEqual([], self.calls())
+        self.assertIsNone(self.result())
 
 
 class UnitFileTest(unittest.TestCase):
@@ -189,6 +217,70 @@ class UnitFileTest(unittest.TestCase):
         self.assertEqual(len(pre), 1)
         self.assertIn("freezy-field.nft", pre[0])
         self.assertLess(self.lines.index(pre[0]), self.lines.index("ExecStart=/usr/libexec/freezy-net-helper"))
+
+    def test_a_killed_helper_is_started_again(self):
+        # Killed mid-run on the field, the helper stayed down: the arena waited two minutes for a
+        # verdict and the team networks were left part-changed.
+        self.assertIn("Restart=on-failure", self.lines)
+
+    def test_watch_runs_the_helper_when_it_starts(self):
+        # A request written while freezy-net.path was stopped was never applied after it started again.
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freezy-net.path")
+        with open(path) as f:
+            self.assertIn("Wants=freezy-net.service", [line.strip() for line in f])
+
+
+class MatchPlaybookTest(unittest.TestCase):
+    """The order of work in match_network.yaml. On the field, a run that failed at the Kea step left the
+    team gateways on the new teams and DHCP on the old ones."""
+
+    def setUp(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ansible", "match_network.yaml")
+        with open(path) as f:
+            self.tasks = yaml.safe_load(f)[0]["tasks"]
+        self.outer = next(task for task in self.tasks if "block" in task)
+        self.change = next(task for task in self.outer["block"] if "block" in task)
+
+    def test_kea_configuration_is_checked_before_anything_changes(self):
+        stage = self.outer["block"][0]
+        self.assertIn("-t /tmp/kea-dhcp4.conf", stage["ansible.builtin.template"]["validate"])
+        self.assertLess(self.outer["block"].index(stage), self.outer["block"].index(self.change))
+        before = self.tasks[:self.tasks.index(self.outer)] + [stage]
+        self.assertFalse([t["name"] for t in before if "nmcli connection modify" in str(t) or "systemd" in str(t)])
+
+    def test_staging_file_is_removed_however_the_run_ends(self):
+        self.assertIn("freezy_kea_staged.path", str(self.outer["always"]))
+
+    def test_every_change_is_inside_the_block_that_rolls_back(self):
+        changing = [task["name"] for task in self.change["block"]]
+        self.assertIn("Set or clear each team VLAN's address", changing)
+        self.assertIn("Put the checked Kea configuration in place", changing)
+        self.assertIn("Load the new configuration into Kea", changing)
+
+    def test_a_vlan_is_activated_when_its_live_address_is_wrong(self):
+        # On the field, a run killed between changing the profiles and activating them left five of
+        # six gateways on the old teams. The next load saw the profiles already right, activated
+        # nothing, and failed because Kea had no address to listen on.
+        self.assertIn("Read each team VLAN's live address", [task["name"] for task in self.tasks])
+        apply = next(task for task in self.change["block"] if "nmcli connection up" in str(task))
+        self.assertIn("freezy_live", str(apply["loop"]))
+        self.assertIn("item.1.stdout", apply["when"])
+
+    def test_kea_restarts_when_an_address_moved_under_an_unchanged_configuration(self):
+        # On the field, with the gateways on one match and Kea's file already on the next, loading
+        # that next match moved the gateways, left Kea running on the old addresses, and failed.
+        load = next(task for task in self.change["block"] if task["name"] == "Load the new configuration into Kea")
+        self.assertIn("freezy_applied", load["ansible.builtin.systemd"]["state"])
+
+    def test_a_failure_puts_addresses_and_kea_back_and_still_fails(self):
+        rescue = [task["name"] for task in self.change["rescue"]]
+        self.assertIn("Put each team VLAN's address back", rescue)
+        self.assertIn("Put the previous Kea configuration back", rescue)
+        self.assertIn("ansible.builtin.fail", self.change["rescue"][-1])
 
 if __name__ == "__main__":
     unittest.main()

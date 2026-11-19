@@ -92,6 +92,7 @@ root.
 | `freezy-kea.container` | `/usr/share/containers/systemd/freezy-kea.container` |
 | Kea configuration, written per match | `/etc/freezy-net/kea/kea-dhcp4.conf` |
 | Kea leases | `/var/lib/freezy-net/kea/` |
+| the last valid request, applied again at boot | `/var/lib/freezy-net/last-request.json` |
 | filter variables, written by the setup | `/etc/freezy-net/freezy-field-vars.nft` |
 | host overrides for `vars.yaml` (optional) | `/etc/freezy-net/vars.yaml` |
 

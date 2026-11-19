@@ -1,7 +1,8 @@
 # Applies the team networks for the match the arena has loaded. Started by freezy-net.path; runs as root.
 [Unit]
 Description=Apply Freezy Arena team networks
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
 # The arena can ask many times in a few seconds (an operator stepping through matches, or a run of
 # rejected requests). Never let systemd's start limit stop this unit: that also fails freezy-net.path,
 # and then no later request is applied until someone resets it by hand.
@@ -15,3 +16,8 @@ ExecStartPre=/usr/sbin/nft -I /etc/freezy-net -f /usr/share/freezy-net/freezy-fi
 ExecStart=/usr/libexec/freezy-net-helper
 # The helper reports failures to the arena itself; do not let a failed run block the next request.
 SuccessExitStatus=1
+# If the helper is killed mid-run (out of memory, a stray signal), start it again. It reads the request
+# that is still on disk and answers it, so the arena gets its verdict without waiting out its
+# two-minute limit. A rejected request or a failed playbook exits 1, which is not a failure here.
+Restart=on-failure
+RestartSec=1
