@@ -1,6 +1,9 @@
 # Starts the host network helper whenever the arena submits a new set of teams.
 [Unit]
 Description=Watch for Freezy Arena team network requests
+# Run the helper once whenever the watch starts, so a request that arrived while it was stopped is
+# applied. With no request on disk the helper logs that and does nothing.
+Wants=freezy-net.service
 
 [Path]
 PathChanged=/run/freezy-net/request/teams.json

@@ -190,5 +190,47 @@ class UnitFileTest(unittest.TestCase):
         self.assertIn("freezy-field.nft", pre[0])
         self.assertLess(self.lines.index(pre[0]), self.lines.index("ExecStart=/usr/libexec/freezy-net-helper"))
 
+    def test_watch_runs_the_helper_when_it_starts(self):
+        # A request written while freezy-net.path was stopped was never applied after it started again.
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freezy-net.path")
+        with open(path) as f:
+            self.assertIn("Wants=freezy-net.service", [line.strip() for line in f])
+
+
+class MatchPlaybookTest(unittest.TestCase):
+    """The order of work in match_network.yaml. On the field, a run that failed at the Kea step left the
+    team gateways on the new teams and DHCP on the old ones."""
+
+    def setUp(self):
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ansible", "match_network.yaml")
+        with open(path) as f:
+            self.tasks = yaml.safe_load(f)[0]["tasks"]
+        self.names = [task["name"] for task in self.tasks]
+        self.change = next(task for task in self.tasks if "block" in task)
+
+    def test_kea_configuration_is_checked_before_anything_changes(self):
+        stage = self.tasks[self.names.index("Stage and check the Kea configuration for this match")]
+        self.assertIn("kea-dhcp4 -t", " ".join(stage["ansible.builtin.template"]["validate"].split()).replace(
+            "/usr/sbin/kea-dhcp4 {{ freezy_kea_image }} -t", "kea-dhcp4 -t"))
+        self.assertLess(self.names.index(stage["name"]), self.tasks.index(self.change))
+        before = self.tasks[:self.tasks.index(self.change)]
+        self.assertFalse([t["name"] for t in before if "nmcli connection modify" in str(t) or "systemd" in str(t)])
+
+    def test_every_change_is_inside_the_block_that_rolls_back(self):
+        changing = [task["name"] for task in self.change["block"]]
+        self.assertIn("Set or clear each team VLAN's address", changing)
+        self.assertIn("Put the checked Kea configuration in place", changing)
+        self.assertIn("Load the new configuration into Kea", changing)
+
+    def test_a_failure_puts_addresses_and_kea_back_and_still_fails(self):
+        rescue = [task["name"] for task in self.change["rescue"]]
+        self.assertIn("Put each team VLAN's address back", rescue)
+        self.assertIn("Put the previous Kea configuration back", rescue)
+        self.assertIn("ansible.builtin.fail", self.change["rescue"][-1])
+
 if __name__ == "__main__":
     unittest.main()

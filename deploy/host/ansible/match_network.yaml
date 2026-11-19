@@ -68,67 +68,147 @@
         label: "{{ item.station }}"
       tags: host
 
-    # `wanted` is what nmcli prints for the desired state: "manual" + the address, or "disabled" + nothing.
-    - name: Set or clear each team VLAN's address
-      ansible.builtin.command: >-
-        nmcli connection modify {{ item.item.connection }}
-        ipv4.method {{ 'manual' if item.item.prefix else 'disabled' }}
-        ipv4.addresses "{{ (item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24') if item.item.prefix else '' }}"
-        ipv4.gateway "" ipv4.never-default yes
-      # nmcli prints an empty second line for a connection with no address; Ansible drops it.
-      when: (item.stdout_lines + [''])[:2] != wanted
-      vars:
-        wanted: >-
-          {{ ['manual', item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24'] if item.item.prefix
-             else ['disabled', ''] }}
-      register: freezy_modified
-      loop: "{{ freezy_current.results }}"
-      loop_control:
-        label: "{{ item.item.station }}"
-      tags: host
+    # Everything that can be checked without touching the field is checked first: Kea (from the same
+    # image the service runs) reads the new configuration from a staging file. A configuration Kea
+    # would refuse fails the run here, with the previous match's networks untouched.
+    - name: Make a staging file for the Kea configuration
+      ansible.builtin.tempfile:
+        state: file
+        prefix: freezy-kea-
+      register: freezy_kea_staged
+      changed_when: false
 
-    - name: Apply the changed addresses
-      ansible.builtin.command: nmcli connection up {{ item.item.item.connection }}
-      when: item.changed
-      loop: "{{ freezy_modified.results }}"
-      loop_control:
-        label: "{{ item.item.item.station }}"
-      tags: host
-
-    # Kea (from the same image the service runs) checks the file before it replaces the live one, so a
-    # bad config fails this run and leaves the previous match's DHCP serving.
-    - name: Write the Kea configuration for this match
+    - name: Stage and check the Kea configuration for this match
       ansible.builtin.template:
         src: templates/kea-dhcp4.conf.j2
-        dest: "{{ freezy_kea_config }}"
-        owner: root
-        group: root
-        mode: "0644"
+        dest: "{{ freezy_kea_staged.path }}"
+        mode: "0600"
         validate: >-
           podman run --rm --network host --security-opt label=disable
           -v %s:/tmp/kea-dhcp4.conf:ro --entrypoint /usr/sbin/kea-dhcp4
           {{ freezy_kea_image }} -t /tmp/kea-dhcp4.conf
-      register: freezy_kea_written
-
-    - name: Load the new configuration into Kea
-      ansible.builtin.systemd:
-        name: "{{ freezy_kea_service }}"
-        state: "{{ 'restarted' if freezy_kea_written.changed else 'started' }}"
-      tags: host
-
-    # Kea can be running without serving, for example if another DHCP server on the host already holds
-    # port 67. Only a socket on each team gateway address proves it is answering there.
-    - name: Check Kea is listening on every populated team VLAN
-      ansible.builtin.command: ss -H -uln src {{ item.prefix }}.{{ freezy_gateway_host }}:67
-      register: freezy_listening
       changed_when: false
-      until: freezy_listening.stdout | length > 0
-      retries: 10
-      delay: 1
-      loop: "{{ freezy_scopes }}"
-      loop_control:
-        label: "{{ item.station }}"
-      tags: host
+
+    # The gateways and DHCP change together or not at all. If any step below fails, the rescue puts
+    # back the addresses and the Kea configuration the run started with, then fails the run so the
+    # arena shows the error.
+    - name: Change the team networks
+      block:
+        # `wanted` is what nmcli prints for the desired state: "manual" + the address, or "disabled" +
+        # nothing.
+        - name: Set or clear each team VLAN's address
+          ansible.builtin.command: >-
+            nmcli connection modify {{ item.item.connection }}
+            ipv4.method {{ 'manual' if item.item.prefix else 'disabled' }}
+            ipv4.addresses "{{ (item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24') if item.item.prefix else '' }}"
+            ipv4.gateway "" ipv4.never-default yes
+          # nmcli prints an empty second line for a connection with no address; Ansible drops it.
+          when: (item.stdout_lines + [''])[:2] != wanted
+          vars:
+            wanted: >-
+              {{ ['manual', item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24'] if item.item.prefix
+                 else ['disabled', ''] }}
+          register: freezy_modified
+          loop: "{{ freezy_current.results }}"
+          loop_control:
+            label: "{{ item.item.station }}"
+          tags: host
+
+        - name: Apply the changed addresses
+          ansible.builtin.command: nmcli connection up {{ item.item.item.connection }}
+          when: item.changed
+          loop: "{{ freezy_modified.results }}"
+          loop_control:
+            label: "{{ item.item.item.station }}"
+          tags: host
+
+        - name: Put the checked Kea configuration in place
+          ansible.builtin.copy:
+            src: "{{ freezy_kea_staged.path }}"
+            remote_src: true
+            dest: "{{ freezy_kea_config }}"
+            owner: root
+            group: root
+            mode: "0644"
+            backup: true
+          register: freezy_kea_written
+
+        - name: Load the new configuration into Kea
+          ansible.builtin.systemd:
+            name: "{{ freezy_kea_service }}"
+            state: "{{ 'restarted' if freezy_kea_written.changed else 'started' }}"
+          tags: host
+
+        # Kea can be running without serving, for example if another DHCP server on the host already
+        # holds port 67. Only a socket on each team gateway address proves it is answering there.
+        - name: Check Kea is listening on every populated team VLAN
+          ansible.builtin.command: ss -H -uln src {{ item.prefix }}.{{ freezy_gateway_host }}:67
+          register: freezy_listening
+          changed_when: false
+          until: freezy_listening.stdout | length > 0
+          retries: 10
+          delay: 1
+          loop: "{{ freezy_scopes }}"
+          loop_control:
+            label: "{{ item.station }}"
+          tags: host
+
+      rescue:
+        - name: Remember what failed
+          ansible.builtin.set_fact:
+            freezy_failure: >-
+              {{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default('failed') }}
+
+        - name: Put each team VLAN's address back
+          ansible.builtin.command: >-
+            nmcli connection modify {{ item.item.connection }}
+            ipv4.method {{ (item.stdout_lines + [''])[0] }}
+            ipv4.addresses "{{ (item.stdout_lines + [''])[1] }}"
+            ipv4.gateway "" ipv4.never-default yes
+          loop: "{{ freezy_current.results }}"
+          loop_control:
+            label: "{{ item.item.station }}"
+          ignore_errors: true
+          tags: host
+
+        - name: Apply the restored addresses
+          ansible.builtin.command: nmcli connection up {{ item.item.connection }}
+          loop: "{{ freezy_current.results }}"
+          loop_control:
+            label: "{{ item.item.station }}"
+          ignore_errors: true
+          tags: host
+
+        - name: Put the previous Kea configuration back
+          ansible.builtin.copy:
+            src: "{{ freezy_kea_written.backup_file }}"
+            remote_src: true
+            dest: "{{ freezy_kea_config }}"
+            owner: root
+            group: root
+            mode: "0644"
+          when: freezy_kea_written.backup_file is defined
+          ignore_errors: true
+
+        - name: Restart Kea on the previous configuration
+          ansible.builtin.systemd:
+            name: "{{ freezy_kea_service }}"
+            state: restarted
+          ignore_errors: true
+          tags: host
+
+        - name: Fail the run
+          ansible.builtin.fail:
+            msg: "{{ freezy_failure }}. The team networks were put back as they were."
+
+      always:
+        - name: Remove the staging file and the backup copy
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop: >-
+            {{ [freezy_kea_staged.path]
+               + ([freezy_kea_written.backup_file] if freezy_kea_written.backup_file is defined else []) }}
 
     - name: Report
       ansible.builtin.debug:
