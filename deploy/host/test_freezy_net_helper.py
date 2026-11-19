@@ -232,7 +232,7 @@ class MatchPlaybookTest(unittest.TestCase):
         # On the field, a run killed between changing the profiles and activating them left five of
         # six gateways on the old teams. The next load saw the profiles already right, activated
         # nothing, and failed because Kea had no address to listen on.
-        self.assertIn("Read each team VLAN's live address", self.names)
+        self.assertIn("Read each team VLAN's live address", [task["name"] for task in self.tasks])
         apply = next(task for task in self.change["block"] if "nmcli connection up" in str(task))
         self.assertIn("freezy_live", str(apply["loop"]))
         self.assertIn("item.1.stdout", apply["when"])
