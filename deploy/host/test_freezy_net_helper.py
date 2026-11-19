@@ -270,6 +270,12 @@ class MatchPlaybookTest(unittest.TestCase):
         self.assertIn("freezy_live", str(apply["loop"]))
         self.assertIn("item.1.stdout", apply["when"])
 
+    def test_kea_restarts_when_an_address_moved_under_an_unchanged_configuration(self):
+        # On the field, with the gateways on one match and Kea's file already on the next, loading
+        # that next match moved the gateways, left Kea running on the old addresses, and failed.
+        load = next(task for task in self.change["block"] if task["name"] == "Load the new configuration into Kea")
+        self.assertIn("freezy_applied", load["ansible.builtin.systemd"]["state"])
+
     def test_a_failure_puts_addresses_and_kea_back_and_still_fails(self):
         rescue = [task["name"] for task in self.change["rescue"]]
         self.assertIn("Put each team VLAN's address back", rescue)

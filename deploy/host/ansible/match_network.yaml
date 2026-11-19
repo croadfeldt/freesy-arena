@@ -137,6 +137,7 @@
                 item.0.changed or (item.1.stdout | trim)
                 != ((item.0.item.item.prefix ~ '.' ~ freezy_gateway_host ~ '/24')
                     if item.0.item.item.prefix else '')
+              register: freezy_applied
               loop: "{{ freezy_modified.results | zip(freezy_live.results) | list }}"
               loop_control:
                 label: "{{ item.0.item.item.station }}"
@@ -153,10 +154,15 @@
                 backup: true
               register: freezy_kea_written
 
+            # Kea binds to the gateway addresses when it starts. It needs a restart when its
+            # configuration changed and also when any address moved under an unchanged configuration.
             - name: Load the new configuration into Kea
               ansible.builtin.systemd:
                 name: "{{ freezy_kea_service }}"
-                state: "{{ 'restarted' if freezy_kea_written.changed else 'started' }}"
+                state: >-
+                  {{ 'restarted' if freezy_kea_written.changed
+                     or (freezy_applied.results | selectattr('changed') | list | length > 0)
+                     else 'started' }}
               tags: host
 
             # Kea can be running without serving, for example if another DHCP server on the host already
@@ -166,7 +172,7 @@
               register: freezy_listening
               changed_when: false
               until: freezy_listening.stdout | length > 0
-              retries: 10
+              retries: 6
               delay: 1
               loop: "{{ freezy_scopes }}"
               loop_control:
