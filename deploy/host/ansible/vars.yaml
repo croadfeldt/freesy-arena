@@ -54,7 +54,9 @@ freezy_team_vlans:
 freezy_gateway_host: 4
 freezy_dhcp_first_host: 20
 freezy_dhcp_last_host: 199
-freezy_dhcp_lease_seconds: 3600
+# Twelve hours, longer than an event day. A connected driver station then never depends on a renewal
+# during a match; if Kea is down, it keeps its address. A laptop asks afresh each time it is plugged in.
+freezy_dhcp_lease_seconds: 43200
 
 # The FMS address. The per-match step never changes it; it only refuses to run if it is missing.
 freezy_fms_address: 10.0.100.5
