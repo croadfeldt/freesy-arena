@@ -15,3 +15,8 @@ ExecStartPre=/usr/sbin/nft -I /etc/freezy-net -f /usr/share/freezy-net/freezy-fi
 ExecStart=/usr/libexec/freezy-net-helper
 # The helper reports failures to the arena itself; do not let a failed run block the next request.
 SuccessExitStatus=1
+# If the helper is killed mid-run (out of memory, a stray signal), start it again. It reads the request
+# that is still on disk and answers it, so the arena gets its verdict without waiting out its
+# two-minute limit. A rejected request or a failed playbook exits 1, which is not a failure here.
+Restart=on-failure
+RestartSec=1

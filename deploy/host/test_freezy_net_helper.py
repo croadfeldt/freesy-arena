@@ -190,6 +190,11 @@ class UnitFileTest(unittest.TestCase):
         self.assertIn("freezy-field.nft", pre[0])
         self.assertLess(self.lines.index(pre[0]), self.lines.index("ExecStart=/usr/libexec/freezy-net-helper"))
 
+    def test_a_killed_helper_is_started_again(self):
+        # Killed mid-run on the field, the helper stayed down: the arena waited two minutes for a
+        # verdict and the team networks were left part-changed.
+        self.assertIn("Restart=on-failure", self.lines)
+
     def test_watch_runs_the_helper_when_it_starts(self):
         # A request written while freezy-net.path was stopped was never applied after it started again.
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freezy-net.path")
