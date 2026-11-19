@@ -1,7 +1,8 @@
 # Applies the team networks for the match the arena has loaded. Started by freezy-net.path; runs as root.
 [Unit]
 Description=Apply Freezy Arena team networks
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
 # The arena can ask many times in a few seconds (an operator stepping through matches, or a run of
 # rejected requests). Never let systemd's start limit stop this unit: that also fails freezy-net.path,
 # and then no later request is applied until someone resets it by hand.

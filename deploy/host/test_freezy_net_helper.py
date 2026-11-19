@@ -43,6 +43,7 @@ class HelperTest(unittest.TestCase):
             FREEZY_NET_PLAYBOOK="/nonexistent/match_network.yaml",
             FAKE_LOG=self.log,
             FAKE_SPOOL=self.spool,
+            FREEZY_NET_STATE=self.dir.name,
         )
 
     def tearDown(self):
@@ -167,6 +168,33 @@ class HelperTest(unittest.TestCase):
         applied = [json.loads(arg)["team_numbers"][0] for arg in self.calls() if arg.startswith("{")]
         self.assertEqual(["254", "1114"], applied)
 
+    def test_applies_the_last_request_again_when_none_has_come_since_the_boot(self):
+        # On the field, a hard reset in the middle of a team change came back with the gateways on the
+        # new match and DHCP on the old one, and stayed that way until someone loaded a match.
+        self.write_request({"id": "before", "team_numbers": ["254", "", "1114", "", "", "10101"]})
+        self.assertEqual(0, self.run_helper().returncode)
+        os.remove(self.request_path())  # /run is empty after a boot
+        os.remove(self.log)
+
+        completed = self.run_helper()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        applied = [json.loads(arg)["team_numbers"] for arg in self.calls() if arg.startswith("{")]
+        self.assertEqual([["254", "", "1114", "", "", "10101"]], applied)
+        self.assertEqual({"id": "before", "state": "ok", "message": ""}, self.result())
+
+    def test_a_rejected_request_is_not_remembered(self):
+        self.write_request({"id": "good", "team_numbers": ["254", "", "", "", "", ""]})
+        self.run_helper()
+        self.write_request({"id": "bad", "team_numbers": ["254; reboot", "", "", "", "", ""]})
+        self.run_helper()
+        with open(os.path.join(self.dir.name, "last-request.json")) as f:
+            self.assertEqual("good", json.load(f)["id"])
+
+    def test_nothing_to_apply_on_a_first_boot(self):
+        completed = self.run_helper()
+        self.assertEqual(1, completed.returncode)
+        self.assertEqual([], self.calls())
+        self.assertIsNone(self.result())
 
 
 class UnitFileTest(unittest.TestCase):
