@@ -39,6 +39,13 @@ freezy_fms_dns: [10.0.100.1]
 # The account the arena's container runs as. It owns the request directory.
 freezy_arena_user: cheesy
 
+# Where deploy/freezy-update gets a new arena image: an image to pull, such as
+# quay.io/<namespace>/freezy-arena:latest (.github/workflows/images.yml pushes one on every merge), or
+# empty to build it on the field server from the arena account's checkout. That checkout is
+# freezy_arena_checkout, or ~<freezy_arena_user>/freesy-arena-2026 if that is empty.
+freezy_arena_image_source: ""
+freezy_arena_checkout: ""
+
 # The six team VLANs, in the arena's station order. `connection` is the NetworkManager connection (and
 # interface) that carries the VLAN on the field server; the one-time host setup creates them.
 freezy_team_vlans:

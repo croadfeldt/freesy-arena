@@ -1,0 +1,57 @@
+# Build the arena and Kea container images. A pull request only builds them, so a broken build shows up
+# before the merge. A merge into the branch below also pushes them to quay.io, where the field server's
+# update script (deploy/freezy-update) pulls the arena image from.
+#
+# Pushing needs, in the repository's settings:
+#   variable QUAY_NAMESPACE   the quay.io organization or user that owns the two repositories
+#   secret   QUAY_USERNAME    a quay.io robot account with write access to both
+#   secret   QUAY_PASSWORD    that robot account's token
+# Without QUAY_NAMESPACE the images are built and not pushed, so a fork without the settings still runs.
+on:
+  push:
+    branches: [ Freezy-Arena-2026 ]
+  pull_request:
+    branches: [ Freezy-Arena-2026 ]
+name: Images
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: freezy-arena
+            containerfile: ./Containerfile
+            context: .
+          - name: freezy-kea
+            containerfile: ./deploy/kea/Containerfile
+            context: ./deploy/kea
+    env:
+      PUSH: ${{ github.event_name == 'push' && vars.QUAY_NAMESPACE != '' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set the image tags
+        run: echo "SHORT_SHA=${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+
+      - name: Build
+        id: build
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ matrix.name }}
+          tags: latest ${{ env.SHORT_SHA }}
+          containerfiles: ${{ matrix.containerfile }}
+          context: ${{ matrix.context }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Push to quay.io
+        if: env.PUSH == 'true'
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: quay.io/${{ vars.QUAY_NAMESPACE }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
