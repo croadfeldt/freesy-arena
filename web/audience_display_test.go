@@ -111,3 +111,16 @@ func TestAudienceDisplayWebsocket(t *testing.T) {
 	web.arena.LowerThirdNotifier.Notify()
 	readWebsocketType(t, ws, "lowerThird")
 }
+
+func TestAudienceDisplayChromaOverride(t *testing.T) {
+	web := setupTestWeb(t)
+	web.arena.EventSettings.AudienceChromaColor = "#123456"
+	url := "/displays/audience?displayId=1&background=%230f0&reversed=false&overlayLocation=bottom"
+	page := web.getHttpResponse(url)
+	assert.Equal(t, 200, page.Code)
+	assert.NotContains(t, page.Body.String(), "data-chroma-color")
+	web.arena.EventSettings.AudienceChromaOverrideEnabled = true
+	page = web.getHttpResponse(url)
+	assert.Equal(t, 200, page.Code)
+	assert.Contains(t, page.Body.String(), `data-chroma-color="#123456"`)
+}

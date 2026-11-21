@@ -885,7 +885,7 @@ const setTeamInfo = function (side, position, teamId, cards, rankings) {
 $(function () {
   // Read the configuration for this display from the URL query string.
   const urlParams = new URLSearchParams(window.location.search);
-  document.body.style.backgroundColor = urlParams.get("background");
+  document.body.style.backgroundColor = document.body.dataset.chromaColor || urlParams.get("background");
   // Use the same audience-display placement preference for both information bars.
   // Unset/invalid values retain the existing bottom-positioned default.
   const overlayLocation = urlParams.get("overlayLocation") === "top" ? "top" : "bottom";

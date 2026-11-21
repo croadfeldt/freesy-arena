@@ -547,7 +547,7 @@ UI for configuring event settings.
           </div>
           <div class="tab-pane" id="automation" role="tabpanel">
             <fieldset class="mb-4">
-              <legend>Audience Score Position</legend>
+              <legend>Audience Score Position and Chroma Key</legend>
               <div class="row mb-3 align-items-center">
                 <label class="col-lg-8 col-form-label" for="audienceScoreBottomOffsetPx">Audience score offset from bottom (px)</label>
                 <div class="col-lg-4">
@@ -557,6 +557,21 @@ UI for configuring event settings.
               </div>
               <p class="form-text">Raise the Match Introduction and Match Play score overlay by this many pixels.
                 Applies to bottom placement only. Default: 0. Reload the audience display after saving.</p>
+              <input type="hidden" name="audienceChromaOptionsPresent" value="1">
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="audienceChromaOverrideEnabled"
+                  name="audienceChromaOverrideEnabled" {{if .AudienceChromaOverrideEnabled}}checked{{end}}>
+                <label class="form-check-label" for="audienceChromaOverrideEnabled">Override chroma background</label>
+              </div>
+              <div class="row mb-3 align-items-center">
+                <label class="col-lg-8 col-form-label" for="audienceChromaColor">Chroma key background color</label>
+                <div class="col-lg-4">
+                  <input class="form-control form-control-color w-100" type="color" id="audienceChromaColor"
+                    name="audienceChromaColor" value="{{if .AudienceChromaColor}}{{.AudienceChromaColor}}{{else}}#00ff00{{end}}">
+                </div>
+              </div>
+              <p class="form-text">When enabled, replaces the audience display's configured background color.
+                Reload the audience display after saving. Disable to use its configured background again.</p>
             </fieldset>
             <fieldset class="mb-4">
               <legend>Audience Display Automation</legend>

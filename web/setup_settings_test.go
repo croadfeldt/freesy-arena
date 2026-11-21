@@ -413,3 +413,45 @@ func TestSetupSettingsAudienceOffsetDefaultAndOmission(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Zero(t, stored.AudienceScoreBottomOffsetPx)
 }
+
+func TestSetupSettingsAudienceChromaColor(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.False(t, web.arena.EventSettings.AudienceChromaOverrideEnabled)
+	page := web.getHttpResponse("/setup/settings")
+	assert.Contains(t, page.Body.String(), `value="#00ff00"`)
+	recorder := web.postHttpResponse("/setup/settings",
+		"audienceChromaOptionsPresent=1&audienceChromaOverrideEnabled=on&audienceChromaColor=%2312ABef")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err := web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.True(t, stored.AudienceChromaOverrideEnabled)
+	assert.Equal(t, "#12abef", stored.AudienceChromaColor)
+	page = web.getHttpResponse("/setup/settings")
+	assert.Contains(t, page.Body.String(), `value="#12abef"`)
+
+	// Older forms retain the override, while unchecking it explicitly disables it.
+	recorder = web.postHttpResponse("/setup/settings", "name=Test")
+	assert.Equal(t, 303, recorder.Code)
+	assert.True(t, web.arena.EventSettings.AudienceChromaOverrideEnabled)
+	assert.Equal(t, "#12abef", web.arena.EventSettings.AudienceChromaColor)
+	recorder = web.postHttpResponse("/setup/settings",
+		"audienceChromaOptionsPresent=1&audienceChromaColor=%2312abef")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err = web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.False(t, stored.AudienceChromaOverrideEnabled)
+}
+
+func TestSetupSettingsAudienceChromaValidation(t *testing.T) {
+	for _, bad := range []string{"", "red", "%23fff", "%23gg0000", "%230000000", "%23-00001"} {
+		t.Run(bad, func(t *testing.T) {
+			web := setupTestWeb(t)
+			recorder := web.postHttpResponse("/setup/settings",
+				"name=Changed&audienceChromaOptionsPresent=1&audienceChromaColor="+bad)
+			assert.Equal(t, 200, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), "six-digit hex color")
+			assert.Equal(t, "Untitled Event", web.arena.EventSettings.Name)
+			assert.Empty(t, web.arena.EventSettings.AudienceChromaColor)
+		})
+	}
+}

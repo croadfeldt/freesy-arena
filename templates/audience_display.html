@@ -14,7 +14,7 @@ Display shown on the audience screen overlayed over the video.
     <link rel="stylesheet" href="/static/css/audience_display.css"/>
     <link rel="stylesheet" href="/static/css/audience_information.css"/>
   </head>
-  <body>
+  <body{{if .AudienceChromaOverrideEnabled}} data-chroma-color="{{.AudienceChromaColor}}"{{end}}>
     <div id="videoOverlay">
       <video id="transitionVideo" preload="auto" playsinline></video>
     </div>

@@ -57,6 +57,8 @@ type EventSettings struct {
 	AutoAudienceBracketSec           int
 	AutoAudienceLastMatchSec         int
 	AudienceScoreBottomOffsetPx      int
+	AudienceChromaColor              string
+	AudienceChromaOverrideEnabled    bool
 	AudienceRankingsFields           string
 	NexusEnabled                     bool
 	NexusAutoQueueEnabled            bool
