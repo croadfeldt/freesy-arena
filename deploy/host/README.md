@@ -18,7 +18,10 @@ loads the match that was loaded before. The image is pulled from `freezy_arena_i
 `ansible/vars.yaml` (set it in `/etc/freezy-net/vars.yaml`), or built on the field server if that is
 empty. The image that ran before is kept as `localhost/freezy-arena:previous`. If the new arena does not
 answer within 90 seconds the script goes back to it by itself, and `deploy/freezy-update --rollback`
-goes back to it at any time. It leaves `host_network.yaml` and `jump_vms.yaml` to a person, because they
+goes back to it at any time (run it again to undo). Every image is also tagged with its commit, and the
+newest five are kept: `deploy/freezy-update --list` shows them and which one is running, and
+`deploy/freezy-update --rollback <commit>` puts the arena on any of them. Older versions are deleted at
+each update; the running and previous images never are. It leaves `host_network.yaml` and `jump_vms.yaml` to a person, because they
 can cut off the way in, and says when one of them changed. What it did is in `journalctl -t
 freezy-update`. `python3 -m unittest deploy/test_freezy_update.py` tests it against a fake field server.
 

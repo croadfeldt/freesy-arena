@@ -23,15 +23,88 @@ KEA_SOURCE = "kkkk" * 10
 HOST_SETUP = f"ansible-playbook -i localhost, -c local {CHECKOUT}/deploy/host/ansible/host_setup.yaml"
 
 
+def commit(n):
+    """A 40-character commit id for version n."""
+    return f"{n:x}" * 40 if n < 16 else f"{n:040x}"
+
+
 class FakeRunner:
+    """Records every command, and keeps a small fake podman image store for the arena's account."""
+
     def __init__(self, is_arena_user=False, changed="", revision="", previous_exists=True, heads=None,
-                 kea_built_from=KEA_SOURCE):
+                 kea_built_from=KEA_SOURCE, versions=None):
         self.is_arena_user = is_arena_user
         self.arena_home = "/home/cheesy"
         self.calls = []
-        self.changed, self.revision, self.previous_exists = changed, revision, previous_exists
+        self.changed, self.revision = changed, revision
         self.heads = heads or {}
         self.kea_built_from = kea_built_from
+        self.clock = 1000
+        self.images = {}  # image id -> {"created": int, "revision": str}
+        self.tags = {}    # image name -> image id
+        # Kept versions from earlier updates: n -> created; the newest is running and the next one previous.
+        for n in sorted(versions or {}):
+            self.add_image(f"{fu.REPOSITORY}:{commit(n)[:12]}", commit(n), created=n)
+        if versions:
+            newest = sorted(versions, reverse=True)
+            self.tags[fu.IMAGE] = self.tags[f"{fu.REPOSITORY}:{commit(newest[0])[:12]}"]
+            if previous_exists and len(newest) > 1:
+                self.tags[fu.PREVIOUS] = self.tags[f"{fu.REPOSITORY}:{commit(newest[1])[:12]}"]
+        else:
+            self.add_image(fu.IMAGE, "", created=1)
+            if previous_exists:
+                self.add_image(fu.PREVIOUS, "", created=0)
+
+    def add_image(self, name, revision, created=None):
+        image = f"id{len(self.images):04d}"
+        if created is None:
+            self.clock += 1
+            created = self.clock
+        self.images[image] = {"created": created, "revision": revision}
+        self.tags[name] = image
+        return image
+
+    def resolve(self, reference):
+        if reference in self.images:
+            return reference
+        return self.tags.get(reference)
+
+    def podman(self, args):
+        if args[:2] == ["image", "exists"]:
+            return "", 0 if self.resolve(args[2]) else 1
+        if args[:2] == ["image", "inspect"]:
+            fmt, reference = args[3], args[4]
+            if "freezy.source" in fmt:
+                return (self.kea_built_from or ""), 0 if self.kea_built_from is not None else 125
+            image = self.resolve(reference)
+            if not image:
+                return "", 125
+            if fmt == "{{.Id}}":
+                return image, 0
+            if fmt == "{{.Id}} {{.Created.Unix}}":
+                return f"{image} {self.images[image]['created']}", 0
+            return self.images[image]["revision"], 0
+        if args[0] == "tag":
+            self.tags[args[2]] = self.resolve(args[1])
+            return "", 0
+        if args[0] == "build":
+            if fu.KEA_IMAGE in args:
+                return "", 0
+            label = args[args.index("--label") + 1]
+            self.add_image(fu.IMAGE, label.split("=", 1)[1])
+            return "", 0
+        if args[0] == "pull":
+            self.add_image(args[-1], self.revision)
+            return "", 0
+        if args[0] == "images":
+            prefix = args[-1] + ":"
+            return "\n".join(name[len(prefix):] for name in self.tags if name.startswith(prefix)), 0
+        if args[0] == "rmi":
+            image = self.tags.pop(args[1])
+            if image not in self.tags.values():
+                del self.images[image]
+            return "", 0
+        raise AssertionError(f"unexpected podman call {args}")
 
     def run(self, *args, who="me", cwd=None, check=True):
         self.calls.append((who, list(args)))
@@ -43,21 +116,23 @@ class FakeRunner:
             out = sequence.pop(0) if len(sequence) > 1 else sequence[0]
         elif args[:1] == ("git",) and "diff" in args:
             out = self.changed
-        elif args[:3] == ("podman", "image", "exists"):
-            rc = 0 if (args[3] != fu.PREVIOUS or self.previous_exists) else 1
-        elif args[:3] == ("podman", "image", "inspect") and "freezy.source" in " ".join(args):
-            out = self.kea_built_from or ""
-            rc = 0 if self.kea_built_from is not None else 125
-        elif args[:3] == ("podman", "image", "inspect"):
-            out = self.revision
+        elif args[:1] == ("git",) and "log" in args:
+            out = "Subject of " + args[-1][:7]
+        elif args[:1] == ("podman",):
+            out, rc = self.podman(list(args[1:]))
         elif args[:1] == ("ansible-playbook",):
             out = "localhost : ok=21 changed=3 unreachable=0 failed=0"
-        elif args[:1] == ("cmp",):
-            rc = 0
+        if check and rc != 0:
+            raise fu.Stop(f"{args} failed")
         return subprocess.CompletedProcess(args, rc, out, "")
 
     def commands(self, who=None):
         return [" ".join(args) for w, args in self.calls if who is None or w == who]
+
+    def kept(self):
+        prefix = fu.REPOSITORY + ":"
+        return sorted(name[len(prefix):] for name in self.tags
+                      if name.startswith(prefix) and len(name) - len(prefix) == 12)
 
 
 class FakeArena:
@@ -108,7 +183,8 @@ class UpdateTest(unittest.TestCase):
     def test_builds_when_no_image_source_is_set(self):
         runner, arena = FakeRunner(), FakeArena()
         updater(runner, arena).update("", False, False)
-        self.assertIn(f"podman build -q -t {fu.IMAGE} {ARENA_CHECKOUT}", runner.commands("arena"))
+        self.assertIn(f"podman build -q --label {fu.REVISION_LABEL}={'bbbb' * 10} -t {fu.IMAGE} {ARENA_CHECKOUT}",
+                      runner.commands("arena"))
         self.assertFalse([c for c in runner.commands() if c.startswith("podman pull")])
 
     def test_the_test_match_is_not_loaded_again(self):
@@ -181,16 +257,75 @@ class UpdateTest(unittest.TestCase):
 
     def test_rollback_restores_the_previous_image_and_the_match(self):
         runner, arena = FakeRunner(), FakeArena()
+        running, previous = runner.tags[fu.IMAGE], runner.tags[fu.PREVIOUS]
         updater(runner, arena).rollback(False)
-        self.assertIn(f"podman tag {fu.PREVIOUS} {fu.IMAGE}", runner.commands("arena"))
+        self.assertEqual(previous, runner.tags[fu.IMAGE])
         self.assertEqual([12], arena.loaded)
         self.assertFalse([c for c in runner.commands() if c.startswith("git")])
+        # The image it left becomes the previous one, so a second rollback undoes the first.
+        self.assertEqual(running, runner.tags[fu.PREVIOUS])
+        updater(runner, FakeArena()).rollback(False)
+        self.assertEqual(running, runner.tags[fu.IMAGE])
 
     def test_rollback_without_a_previous_image_changes_nothing(self):
         runner = FakeRunner(previous_exists=False)
         with self.assertRaisesRegex(fu.Stop, "no previous image"):
             updater(runner, FakeArena()).rollback(False)
         self.assertFalse([c for c in runner.commands() if "tag" in c or "systemctl" in c])
+
+
+@mock.patch.object(fu, "say", lambda message: None)
+class VersionsTest(unittest.TestCase):
+    def test_every_update_tags_the_image_with_its_commit(self):
+        runner = FakeRunner()
+        updater(runner, FakeArena()).update("", False, False)
+        self.assertEqual(runner.tags[fu.IMAGE], runner.tags[f"{fu.REPOSITORY}:{'bbbb' * 3}"])
+
+    def test_a_pulled_image_is_tagged_with_the_commit_it_was_built_from(self):
+        runner = FakeRunner(revision="cccc" * 10)
+        updater(runner, FakeArena()).update("quay.io/x/freezy-arena:latest", False, False)
+        self.assertEqual(runner.tags[fu.IMAGE], runner.tags[f"{fu.REPOSITORY}:{'cccc' * 3}"])
+
+    def test_the_newest_five_are_kept_and_older_ones_deleted(self):
+        runner = FakeRunner(versions={n: n for n in range(1, 7)})
+        updater(runner, FakeArena()).update("", False, False)
+        self.assertEqual(sorted([commit(n)[:12] for n in (3, 4, 5, 6)] + ["bbbb" * 3]), runner.kept())
+        self.assertEqual(5, len(runner.kept()))
+
+    def test_the_running_and_previous_images_are_never_deleted(self):
+        # After a rollback to the oldest version, it is running and must survive the next clean-up.
+        runner = FakeRunner(versions={n: n for n in range(1, 7)})
+        updater(runner, FakeArena()).rollback(False, commit(1)[:7])
+        updater(runner, FakeArena()).update("", False, False)
+        self.assertIn(commit(1)[:12], runner.kept())
+        self.assertEqual(runner.tags[fu.PREVIOUS], runner.tags[f"{fu.REPOSITORY}:{commit(1)[:12]}"])
+
+    def test_rollback_to_a_kept_version_by_its_commit(self):
+        runner, arena = FakeRunner(versions={n: n for n in range(1, 4)}), FakeArena()
+        running = runner.tags[fu.IMAGE]
+        updater(runner, arena).rollback(False, commit(1)[:7])
+        self.assertEqual(runner.tags[f"{fu.REPOSITORY}:{commit(1)[:12]}"], runner.tags[fu.IMAGE])
+        self.assertEqual(running, runner.tags[fu.PREVIOUS])
+        self.assertEqual([12], arena.loaded)
+
+    def test_rollback_to_an_unknown_or_running_version_changes_nothing(self):
+        runner = FakeRunner(versions={n: n for n in range(1, 4)})
+        with self.assertRaisesRegex(fu.Stop, "No single kept version"):
+            updater(runner, FakeArena()).rollback(False, "deadbeef")
+        with self.assertRaisesRegex(fu.Stop, "already running"):
+            updater(runner, FakeArena()).rollback(False, commit(3)[:12])
+        self.assertFalse([c for c in runner.commands() if c.startswith("podman tag") or "systemctl" in c])
+
+    def test_list_marks_the_running_and_previous_versions(self):
+        said = []
+        runner = FakeRunner(versions={n: n for n in range(1, 4)})
+        with mock.patch.object(fu, "say", said.append):
+            updater(runner, FakeArena()).list_versions()
+        self.assertEqual([commit(n)[:12] for n in (3, 2, 1)], [line.split()[0] for line in said])
+        self.assertIn("running", said[0])
+        self.assertIn("previous", said[1])
+        self.assertIn("Subject of", said[2])
+        self.assertFalse([c for c in runner.commands() if c.startswith("podman tag") or "systemctl" in c])
 
 
 class WorkflowTest(unittest.TestCase):

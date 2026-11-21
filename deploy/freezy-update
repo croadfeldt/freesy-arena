@@ -4,7 +4,9 @@
     deploy/freezy-update              update everything this version changes, then restart the arena
     deploy/freezy-update --build      build the arena image here instead of pulling it
     deploy/freezy-update --image REF  pull this arena image instead of the configured one
-    deploy/freezy-update --rollback   put the arena back on the image it ran before the last update
+    deploy/freezy-update --rollback   put the arena back on the image it ran before (again to undo)
+    deploy/freezy-update --rollback COMMIT   put the arena on a kept version
+    deploy/freezy-update --list       the kept versions of the arena, and which one is running
 
 Run it from a checkout of this repository, as a user with sudo (ansible) to update everything, or as the
 arena's account (cheesy) to update the arena only. In order, it:
@@ -15,7 +17,9 @@ arena's account (cheesy) to update the arena only. In order, it:
    so if the pull changed the host files (deploy/host, deploy/kea) it stops there and says what to run;
 3. as the arena's account: pulls its checkout, keeps the running image as
    localhost/freezy-arena:previous, then pulls the new image (freezy_arena_image_source in vars.yaml) or
-   builds it, and installs the unit file if it changed;
+   builds it, and installs the unit file if it changed. Every image is also tagged with its commit
+   (localhost/freezy-arena:<commit>); the newest five are kept, older ones are deleted, and the running
+   and previous images are never deleted;
 4. restarts the arena and loads the match that was loaded before. If the new arena does not answer
    within 90 seconds, it goes back to the previous image by itself.
 
@@ -38,8 +42,11 @@ import time
 import urllib.parse
 from pathlib import Path
 
-IMAGE = "localhost/freezy-arena:latest"
-PREVIOUS = "localhost/freezy-arena:previous"
+REPOSITORY = "localhost/freezy-arena"
+IMAGE = REPOSITORY + ":latest"
+PREVIOUS = REPOSITORY + ":previous"
+KEEP_VERSIONS = 5
+REVISION_LABEL = "org.opencontainers.image.revision"
 KEA_IMAGE = "localhost/freezy-kea:latest"
 UNIT = "freezy-arena.service"
 PRE_MATCH = 0
@@ -287,21 +294,49 @@ class Updater:
             say("Not applied, because it can cut off the way in. When you are on site, run as root:\n  " +
                 "\n  ".join(by_hand))
 
+    def image_id(self, reference):
+        result = self.runner.run("podman", "image", "inspect", "--format", "{{.Id}}", reference, who="arena",
+                                 check=False)
+        return result.stdout.strip() if result.returncode == 0 else None
+
     def update_arena_image(self, image_ref, build, head):
-        if self.runner.run("podman", "image", "exists", IMAGE, who="arena", check=False).returncode == 0:
+        if self.image_id(IMAGE):
             self.sh("podman", "tag", IMAGE, PREVIOUS, who="arena")
         if build or not image_ref:
             say("Building the arena image from " + str(self.arena_checkout) + ".")
-            self.sh("podman", "build", "-q", "-t", IMAGE, str(self.arena_checkout), who="arena")
-            return
-        say(f"Pulling {image_ref}.")
-        self.sh("podman", "pull", "-q", image_ref, who="arena")
-        self.sh("podman", "tag", image_ref, IMAGE, who="arena")
-        revision = self.sh("podman", "image", "inspect", "--format",
-                           '{{ index .Labels "org.opencontainers.image.revision" }}', IMAGE, who="arena")
-        if revision and revision != head:
-            say(f"Note: the image is from {revision[:12]}, not the checkout's {head[:12]}. Its build may "
-                "still be running; run this again once it has finished.")
+            self.sh("podman", "build", "-q", "--label", f"{REVISION_LABEL}={head}", "-t", IMAGE,
+                    str(self.arena_checkout), who="arena")
+            commit = head
+        else:
+            say(f"Pulling {image_ref}.")
+            self.sh("podman", "pull", "-q", image_ref, who="arena")
+            self.sh("podman", "tag", image_ref, IMAGE, who="arena")
+            commit = self.sh("podman", "image", "inspect", "--format",
+                             '{{ index .Labels "' + REVISION_LABEL + '" }}', IMAGE, who="arena") or head
+            if commit != head:
+                say(f"Note: the image is from {commit[:12]}, not the checkout's {head[:12]}. Its build may "
+                    "still be running; run this again once it has finished.")
+        self.sh("podman", "tag", IMAGE, f"{REPOSITORY}:{commit[:12]}", who="arena")
+        self.forget_old_versions()
+
+    def versions(self):
+        """The kept versions, newest first: (commit, image id, created as Unix seconds)."""
+        listing = self.sh("podman", "images", "--format", "{{.Tag}}", REPOSITORY, who="arena")
+        found = []
+        for tag in sorted(set(listing.split())):
+            if not re.fullmatch(r"[0-9a-f]{12}", tag):
+                continue
+            details = self.sh("podman", "image", "inspect", "--format", "{{.Id}} {{.Created.Unix}}",
+                              f"{REPOSITORY}:{tag}", who="arena").split()
+            found.append((tag, details[0], int(details[1])))
+        return sorted(found, key=lambda version: version[2], reverse=True)
+
+    def forget_old_versions(self):
+        keep = {self.image_id(IMAGE), self.image_id(PREVIOUS)}
+        for commit, image, _ in self.versions()[KEEP_VERSIONS:]:
+            if image not in keep:
+                self.sh("podman", "rmi", f"{REPOSITORY}:{commit}", who="arena")
+                say(f"Deleted the old arena version {commit}.")
 
     def install_unit(self):
         source = str(self.arena_checkout / "deploy/freezy-arena.container")
@@ -355,25 +390,53 @@ class Updater:
         self.restart_or_roll_back(match_id)
         say("Update finished.")
 
-    def rollback(self, force):
-        if self.runner.run("podman", "image", "exists", PREVIOUS, who="arena", check=False).returncode != 0:
-            raise Stop("There is no previous image to go back to.")
+    def list_versions(self):
+        running, previous = self.image_id(IMAGE), self.image_id(PREVIOUS)
+        versions = self.versions()
+        if not versions:
+            say("No arena versions are kept yet; the next update starts keeping them.")
+            return
+        for commit, image, created in versions:
+            marks = [name for name, wanted in (("running", running), ("previous", previous)) if image == wanted]
+            subject = self.runner.run("git", "-C", str(self.arena_checkout), "log", "-1", "--format=%s", commit,
+                                      who="arena", check=False).stdout.strip()
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(created))
+            say(f"{commit}  {when}  {', '.join(marks):17}  {subject}".rstrip())
+
+    def rollback(self, force, commit=None):
+        """Put the arena on the previous image, or on a kept version. The image it leaves becomes the
+        previous one, so running this again undoes it."""
+        if commit:
+            matches = [version for version in self.versions() if version[0].startswith(commit)]
+            if len(matches) != 1:
+                raise Stop(f"No single kept version matches {commit}. `deploy/freezy-update --list` shows them.")
+            target, name = matches[0][1], matches[0][0]
+        else:
+            target, name = self.image_id(PREVIOUS), "the previous image"
+            if not target:
+                raise Stop("There is no previous image to go back to.")
+        current = self.image_id(IMAGE)
+        if target == current:
+            raise Stop(f"The arena is already running {name}.")
         match_id = self.loaded_match(force)
-        self.sh("podman", "tag", PREVIOUS, IMAGE, who="arena")
-        say("Restarting the arena on the previous image.")
+        self.sh("podman", "tag", target, IMAGE, who="arena")
+        if current:
+            self.sh("podman", "tag", current, PREVIOUS, who="arena")
+        say(f"Restarting the arena on {name}.")
         if not self.restart_and_wait():
             raise Stop(f"The arena did not answer within {START_TIMEOUT_SEC} seconds. Check "
                        "`journalctl --user -u freezy-arena`.")
         self.reload(match_id)
         say("Rollback finished.")
 
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Update the field server, or roll the arena back.")
     choice = parser.add_mutually_exclusive_group()
     choice.add_argument("--image", help="pull this arena image instead of freezy_arena_image_source")
     choice.add_argument("--build", action="store_true", help="build the arena image instead of pulling it")
-    choice.add_argument("--rollback", action="store_true", help="put the arena back on the previous image")
+    choice.add_argument("--rollback", nargs="?", const="", metavar="COMMIT",
+                        help="put the arena back on the previous image, or on this kept version")
+    choice.add_argument("--list", action="store_true", help="show the kept versions of the arena")
     parser.add_argument("--force", action="store_true", help="restart the arena even during a match")
     args = parser.parse_args(argv)
 
@@ -386,8 +449,10 @@ def main(argv=None):
                   password=os.environ.get("FREEZY_ADMIN_PASSWORD"))
     updater = Updater(checkout, arena_checkout, settings, runner, arena)
     try:
-        if args.rollback:
-            updater.rollback(args.force)
+        if args.list:
+            updater.list_versions()
+        elif args.rollback is not None:
+            updater.rollback(args.force, args.rollback or None)
         else:
             updater.update(args.image or settings.get("freezy_arena_image_source"), args.build, args.force)
     except Stop as stop:
