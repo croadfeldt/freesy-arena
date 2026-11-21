@@ -100,6 +100,8 @@ type EventSettings struct {
 	ScoreTableEstopAddress           string
 	RedAllianceStationEstopAddress   string
 	BlueAllianceStationEstopAddress  string
+	RedHubBoardEnabled               bool
+	BlueHubBoardEnabled              bool
 	LedUniverseMode                  string
 	AdminPassword                    string
 	TeamSignRed1Id                   int
