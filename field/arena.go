@@ -1146,14 +1146,28 @@ func (arena *Arena) setupNetwork(teams [6]*model.Team, isPreload bool) {
 		}
 		go func() {
 			arena.setSCCEthernetEnabled(false)
-			//if err := arena.networkSwitch.ConfigureTeamEthernet(teams); err != nil {
-			// Need to have a UI switch that allows us to change our switch architecture, for now, disable Cisco decision points.
-			if err := arena.UnifiSwitch.UnifiConfigureTeamEthernet(teams); err != nil {
+			if err := arena.configureTeamEthernet(teams); err != nil {
 				log.Printf("Failed to configure team Ethernet: %s", err.Error())
 			}
 			arena.setSCCEthernetEnabled(true)
 		}()
 	}
+}
+
+// Puts each team on its own wired network, through the switch type chosen in the event settings.
+func (arena *Arena) configureTeamEthernet(teams [6]*model.Team) error {
+	if arena.EventSettings.TeamSwitchType() == model.SwitchTypeCisco {
+		return arena.networkSwitch.ConfigureTeamEthernet(teams)
+	}
+	return arena.UnifiSwitch.UnifiConfigureTeamEthernet(teams)
+}
+
+// The state of the switch chosen in the event settings.
+func (arena *Arena) teamSwitchStatus() string {
+	if arena.EventSettings.TeamSwitchType() == model.SwitchTypeCisco {
+		return arena.networkSwitch.Status
+	}
+	return arena.UnifiSwitch.Status
 }
 
 // Returns nil if the match can be started, and an error otherwise.

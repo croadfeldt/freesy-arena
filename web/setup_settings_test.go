@@ -17,6 +17,24 @@ import (
 	"testing"
 )
 
+func TestSetupSettingsSwitchType(t *testing.T) {
+	web := setupTestWeb(t)
+
+	// A new event uses the field server, and the Cisco switch's address fields are marked as such.
+	body := web.getHttpResponse("/setup/settings").Body.String()
+	assert.Regexp(t, `value="fieldServer"\s*selected`, body)
+	assert.Contains(t, body, `class="row mb-3 cisco-switch-setting"`)
+
+	recorder := web.postHttpResponse("/setup/settings", "switchType=cisco&switchAddress=10.0.100.3")
+	assert.Equal(t, 303, recorder.Code)
+	assert.Equal(t, model.SwitchTypeCisco, web.arena.EventSettings.SwitchType)
+	assert.Regexp(t, `value="cisco"\s*selected`, web.getHttpResponse("/setup/settings").Body.String())
+
+	// Anything else is the field server.
+	web.postHttpResponse("/setup/settings", "switchType=bogus")
+	assert.Equal(t, model.SwitchTypeFieldServer, web.arena.EventSettings.SwitchType)
+}
+
 func TestSetupSettings(t *testing.T) {
 	web := setupTestWeb(t)
 

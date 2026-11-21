@@ -10,6 +10,22 @@ import (
 	"strings"
 )
 
+// What puts each team on its own wired network when network security is on.
+const (
+	// The field server routes the team VLANs and serves their DHCP, through the host helper in deploy/host.
+	SwitchTypeFieldServer = "fieldServer"
+	// A Cisco Catalyst 3500-series switch does both, as in stock Cheesy Arena.
+	SwitchTypeCisco = "cisco"
+)
+
+// The switch type in use. An event saved before the setting existed always used the field server.
+func (settings *EventSettings) TeamSwitchType() string {
+	if settings.SwitchType == SwitchTypeCisco {
+		return SwitchTypeCisco
+	}
+	return SwitchTypeFieldServer
+}
+
 type PlayoffType int
 
 const (
@@ -68,6 +84,7 @@ type EventSettings struct {
 	ApAddress                        string
 	ApPassword                       string
 	ApChannel                        int
+	SwitchType                       string
 	SwitchAddress                    string
 	SwitchPassword                   string
 	SCCManagementEnabled             bool
@@ -160,6 +177,7 @@ func (database *Database) GetEventSettings() (*EventSettings, error) {
 		SelectionShowUnpickedTeams:  true,
 		TbaDownloadEnabled:          true,
 		ApChannel:                   36,
+		SwitchType:                  SwitchTypeFieldServer,
 		AlternateIOEnabled:          false,
 		SCCUpCommands:               strings.Join(sccDefaultUpCommands, "\n"),
 		SCCDownCommands:             strings.Join(sccDefaultDownCommands, "\n"),
