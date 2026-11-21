@@ -7,8 +7,9 @@
 # services. Run host_network.yaml first: it creates the interfaces this playbook checks for. See
 # ../README.md.
 #
-# It installs no packages and leaves alone the FMS address, existing connections, and any other
-# firewall on the host. It stops before changing anything if the host is not ready.
+# It installs no packages and leaves alone the FMS address and other connections. In firewalld it puts the
+# team VLANs in the `trusted` zone and opens the arena's ports on the FMS address's zone, and changes
+# nothing else there (freezy-firewalld-zones). It stops before changing anything if the host is not ready.
 - name: Set up the field server for Freezy Arena team networks
   hosts: localhost
   connection: local
@@ -159,6 +160,23 @@
     - name: Check the filter is loaded
       ansible.builtin.command: nft list table inet freezy_field
       changed_when: false
+      tags: host
+
+    # Without this, firewalld's default zone dropped the driver stations' packets to the arena: they could
+    # ping the FMS, and the arena never saw them. The team VLAN filter above already decides what a team
+    # VLAN may reach.
+    - name: Let driver stations through firewalld
+      ansible.builtin.command: >-
+        {{ freezy_src }}/freezy-firewalld-zones {{ freezy_fms_connection }}
+        {{ freezy_team_vlans | map(attribute='connection') | join(' ') }}
+      register: freezy_zones
+      changed_when: "'changed' in freezy_zones.stdout_lines"
+      tags: host
+
+    - name: Say whether firewalld is running
+      ansible.builtin.debug:
+        msg: "{{ freezy_zones.stdout_lines | reject('equalto', 'changed') | list }}"
+      when: freezy_zones.stdout_lines | reject('equalto', 'changed') | list | length > 0
       tags: host
 
     # The arena's container may only write where SELinux says containers may. Its volume mount labels

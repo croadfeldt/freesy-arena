@@ -57,10 +57,18 @@ must exist, the FMS address must be up, and the six team VLAN connections must e
 
 1. installs the files listed below;
 2. loads the team VLAN filter and enables it at boot;
-3. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
+3. puts the team VLANs in firewalld's `trusted` zone and opens the arena's ports (TCP 8080 and 1750,
+   UDP 1160) on the zone of the FMS address (`freezy-firewalld-zones`);
+4. enables the request watcher (`freezy-net.path`) and installs the Kea container unit.
 
-It installs no packages and does not touch the FMS address, other connections, or any other firewall on
-the host. Host-specific values (field interface, VLAN connection names, the arena's account, addresses)
+Step 3 is what lets a driver station reach the arena with firewalld running. Without it, firewalld's
+default zone answered a driver station's ping but dropped its packets to the arena, so the driver
+station could see the FMS and the arena never saw the driver station. The team VLAN filter already
+decides what a team VLAN may reach, so firewalld does not filter them a second time. The script changes
+the saved and the running configuration without a reload, and never starts or stops firewalld.
+
+It installs no packages and does not touch the FMS address, other connections, or anything else in
+firewalld. Host-specific values (field interface, VLAN connection names, the arena's account, addresses)
 are all in `ansible/vars.yaml`; override them in `/etc/freezy-net/vars.yaml`.
 
 ## How the per-match step works
@@ -136,7 +144,8 @@ nothing forwarded to or from the transit network.
 
 Everything else from a team VLAN is dropped: the arena's web pages on port 8080 (on the FMS address and
 on the team gateway address), ssh, and any traffic to another team or the rest of the network. Other
-interfaces are not filtered, so the rules sit alongside firewalld. `freezy-firewall.service` loads the
+interfaces are not filtered, so the rules sit alongside firewalld, which leaves the team VLANs to this
+filter (they are in its `trusted` zone). Stopping firewalld does not remove these rules. `freezy-firewall.service` loads the
 rules before the network comes up and has no stop action. `nft list table inet freezy_field` shows them
 with a count of dropped packets.
 
@@ -152,8 +161,10 @@ with a count of dropped packets.
 
 `python3 -m unittest deploy/host/test_freezy_net_helper.py` runs the helper against a fake playbook
 runner, `python3 -m unittest deploy/jump/test_freezy_transit_select.py` covers the choice of transit
-network, and `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
-machine's network cards. The arena side is covered by `network/unifiswitch_test.go`.
+network, `python3 -m unittest deploy/host/test_freezy_vm_interfaces.py` covers the rewrite of a jump
+machine's network cards, and `python3 -m unittest deploy/host/test_freezy_firewalld_zones.py` runs the
+firewalld zone script against a fake firewalld and NetworkManager. The arena side is covered by
+`network/unifiswitch_test.go`.
 
 `deploy/host/test_freezy_firewall.sh` sends real packets through the filter inside a private network
 namespace (no root needed, nothing on the machine changes). It checks each path is open without the
