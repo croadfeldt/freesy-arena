@@ -493,3 +493,18 @@ func TestSetupSettingsAudienceCamera(t *testing.T) {
 		assert.Equal(t, enabled, web.arena.EventSettings.AudienceCameraBehindHeadTable)
 	}
 }
+
+func TestSetupSettingsMarksSettingsThatNeedAnother(t *testing.T) {
+	web := setupTestWeb(t)
+	body := web.getHttpResponse("/setup/settings").Body.String()
+
+	// The page greys these out, with the note, until the setting they need is on.
+	assert.Contains(t, body, `id="sccSettings"`)
+	assert.Contains(t, body, `id="sccNeedsNetwork"`)
+	assert.Contains(t, body, `id="nexusAutoQueueSettings"`)
+	assert.Contains(t, body, `id="nexusNeedsTba"`)
+	// Greyed-out fields are not sent, so the page enables them again before saving.
+	assert.Contains(t, body, `$(this).find(":input").prop("disabled", false)`)
+	assert.Contains(t, body, "settings-save-bar")
+	assert.NotContains(t, body, "alterntive")
+}
