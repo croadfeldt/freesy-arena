@@ -47,6 +47,49 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Validate display preferences before mutating event-wide settings. Posts
 	// from older clients without these fields retain the existing preferences.
+	audienceScoreBottomOffsetPx := eventSettings.AudienceScoreBottomOffsetPx
+	rawOffset := r.PostFormValue("audienceScoreBottomOffsetPx")
+	if _, submitted := r.PostForm["audienceScoreBottomOffsetPx"]; submitted {
+		value, err := strconv.Atoi(rawOffset)
+		if err != nil || value < 0 {
+			web.renderSettingsWithStatus(
+				w, r, "Audience score offset must be a nonnegative whole number of pixels.",
+				"automation", http.StatusOK,
+			)
+			return
+		}
+		audienceScoreBottomOffsetPx = value
+	}
+
+	audienceCameraBehindHeadTable := eventSettings.AudienceCameraBehindHeadTable
+	if r.PostFormValue("audienceCameraOptionsPresent") == "1" {
+		audienceCameraBehindHeadTable = r.PostFormValue("audienceCameraBehindHeadTable") == "on"
+	}
+
+	audienceChromaColor := eventSettings.AudienceChromaColor
+	audienceChromaOverrideEnabled := eventSettings.AudienceChromaOverrideEnabled
+	if r.PostFormValue("audienceChromaOptionsPresent") == "1" {
+		audienceChromaColor = r.PostFormValue("audienceChromaColor")
+		validColor := len(audienceChromaColor) == 7 && audienceChromaColor[0] == '#'
+		if validColor {
+			for _, char := range audienceChromaColor[1:] {
+				if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
+					validColor = false
+					break
+				}
+			}
+		}
+		if !validColor {
+			web.renderSettingsWithStatus(
+				w, r, "Audience chroma color must be a six-digit hex color, such as #00ff00.",
+				"automation", http.StatusOK,
+			)
+			return
+		}
+		audienceChromaColor = strings.ToLower(audienceChromaColor)
+		audienceChromaOverrideEnabled = r.PostFormValue("audienceChromaOverrideEnabled") == "on"
+	}
+
 	settingsDurations := []struct {
 		key      string
 		previous int
@@ -180,6 +223,10 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.TbaEventCode = r.PostFormValue("tbaEventCode")
 	eventSettings.TbaSecretId = r.PostFormValue("tbaSecretId")
 	eventSettings.TbaSecret = r.PostFormValue("tbaSecret")
+	eventSettings.AudienceScoreBottomOffsetPx = audienceScoreBottomOffsetPx
+	eventSettings.AudienceCameraBehindHeadTable = audienceCameraBehindHeadTable
+	eventSettings.AudienceChromaColor = audienceChromaColor
+	eventSettings.AudienceChromaOverrideEnabled = audienceChromaOverrideEnabled
 	eventSettings.AutoAudienceDisplayEnabled = r.PostFormValue("autoAudienceDisplayEnabled") == "on"
 	eventSettings.AutoAudienceScoreSec = *settingsDurations[0].value
 	eventSettings.AutoAudiencePlayoffDelaySec = *settingsDurations[1].value

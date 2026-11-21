@@ -6,9 +6,8 @@
 package model
 
 import (
-	"strings"
-
 	"github.com/Team254/cheesy-arena/game"
+	"strings"
 )
 
 type PlayoffType int
@@ -53,10 +52,14 @@ type EventSettings struct {
 	TbaSecretId                      string
 	TbaSecret                        string
 	AutoAudienceDisplayEnabled       bool
-	AutoAudienceScoreSec            int
-	AutoAudiencePlayoffDelaySec     int
-	AutoAudienceBracketSec          int
-	AutoAudienceLastMatchSec        int
+	AutoAudienceScoreSec             int
+	AutoAudiencePlayoffDelaySec      int
+	AutoAudienceBracketSec           int
+	AutoAudienceLastMatchSec         int
+	AudienceScoreBottomOffsetPx      int
+	AudienceChromaColor              string
+	AudienceChromaOverrideEnabled    bool
+	AudienceCameraBehindHeadTable    bool
 	AudienceRankingsFields           string
 	NexusEnabled                     bool
 	NexusAutoQueueEnabled            bool
@@ -144,32 +147,32 @@ func (database *Database) GetEventSettings() (*EventSettings, error) {
 
 	// Database record doesn't exist yet; create it now.
 	eventSettings := EventSettings{
-		Name:                       "Untitled Event",
-		LogoSuffix:                 "",
-		PlayoffType:                DoubleEliminationPlayoff,
-		NumPlayoffAlliances:        8,
-		SelectionRound2Order:       "L",
-		AutoAudienceScoreSec:       20,
+		Name:                        "Untitled Event",
+		LogoSuffix:                  "",
+		PlayoffType:                 DoubleEliminationPlayoff,
+		NumPlayoffAlliances:         8,
+		SelectionRound2Order:        "L",
+		AutoAudienceScoreSec:        20,
 		AutoAudiencePlayoffDelaySec: 10,
-		AutoAudienceBracketSec:     20,
-		AutoAudienceLastMatchSec:   40,
-		SelectionRound3Order:       "",
-		SelectionShowUnpickedTeams: true,
-		TbaDownloadEnabled:         true,
-		ApChannel:                  36,
-		AlternateIOEnabled:         false,
-		SCCUpCommands:              strings.Join(sccDefaultUpCommands, "\n"),
-		SCCDownCommands:            strings.Join(sccDefaultDownCommands, "\n"),
-		LedUniverseMode:            "single",
-		CompanionAddress:           "",
-		AutoDurationSec:            game.MatchTiming.AutoDurationSec,
-		PauseDurationSec:           game.MatchTiming.PauseDurationSec,
-		TransitionShiftDurationSec: game.MatchTiming.TransitionShiftDurationSec,
-		ShiftDurationSec:           game.MatchTiming.ShiftDurationSec,
-		EndgameDurationSec:         game.MatchTiming.EndgameDurationSec,
-		EnergizedBonusThreshold:    game.EnergizedBonusThreshold,
-		SuperchargedBonusThreshold: game.SuperchargedBonusThreshold,
-		TraversalBonusThreshold:    game.TraversalBonusThreshold,
+		AutoAudienceBracketSec:      20,
+		AutoAudienceLastMatchSec:    40,
+		SelectionRound3Order:        "",
+		SelectionShowUnpickedTeams:  true,
+		TbaDownloadEnabled:          true,
+		ApChannel:                   36,
+		AlternateIOEnabled:          false,
+		SCCUpCommands:               strings.Join(sccDefaultUpCommands, "\n"),
+		SCCDownCommands:             strings.Join(sccDefaultDownCommands, "\n"),
+		LedUniverseMode:             "single",
+		CompanionAddress:            "",
+		AutoDurationSec:             game.MatchTiming.AutoDurationSec,
+		PauseDurationSec:            game.MatchTiming.PauseDurationSec,
+		TransitionShiftDurationSec:  game.MatchTiming.TransitionShiftDurationSec,
+		ShiftDurationSec:            game.MatchTiming.ShiftDurationSec,
+		EndgameDurationSec:          game.MatchTiming.EndgameDurationSec,
+		EnergizedBonusThreshold:     game.EnergizedBonusThreshold,
+		SuperchargedBonusThreshold:  game.SuperchargedBonusThreshold,
+		TraversalBonusThreshold:     game.TraversalBonusThreshold,
 	}
 
 	if err := database.eventSettingsTable.create(&eventSettings); err != nil {

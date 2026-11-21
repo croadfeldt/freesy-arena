@@ -346,7 +346,7 @@ func TestSetupSettingsAudienceOptions(t *testing.T) {
 		"activeSettingsTab=automation&autoAudienceDisplayEnabled=on&"+
 			"autoAudienceScoreSec=25&autoAudiencePlayoffDelaySec=8&"+
 			"autoAudienceBracketSec=35&autoAudienceLastMatchSec=60&"+
-			"audienceRankingsOptionsPresent=1&"+
+			"audienceScoreBottomOffsetPx=75&audienceRankingsOptionsPresent=1&"+
 			"audienceRankingsOption=rp&audienceRankingsOption=nextMatch"+
 			"&autoDurationSec=20&pauseDurationSec=3&transitionShiftDurationSec=10&shiftDurationSec=25&endgameDurationSec=30&energizedBonusThreshold=100&superchargedBonusThreshold=360&traversalBonusThreshold=50")
 	assert.Equal(t, 303, recorder.Code)
@@ -361,6 +361,7 @@ func TestSetupSettingsAudienceOptions(t *testing.T) {
 
 	stored, err := web.arena.Database.GetEventSettings()
 	assert.NoError(t, err)
+	assert.Equal(t, 75, stored.AudienceScoreBottomOffsetPx)
 	assert.Equal(t, 25, stored.AutoAudienceScoreSec)
 	assert.Equal(t, 35, stored.AutoAudienceBracketSec)
 	assert.Equal(t, "rp,nextMatch", stored.AudienceRankingsFields)
@@ -382,5 +383,95 @@ func TestSetupSettingsAudienceTimerValidation(t *testing.T) {
 		assert.Contains(t, recorder.Body.String(), "between 1 and 600 seconds")
 		assert.Equal(t, 20, web.arena.EventSettings.AudienceScoreSeconds())
 		assert.Equal(t, "", web.arena.EventSettings.AudienceRankingsFields)
+	}
+}
+
+func TestSetupSettingsAudienceOffsetValidation(t *testing.T) {
+	for _, bad := range []string{"-1", "bad", "1.5", ""} {
+		t.Run(bad, func(t *testing.T) {
+			web := setupTestWeb(t)
+			web.arena.EventSettings.AudienceScoreBottomOffsetPx = 75
+			recorder := web.postHttpResponse("/setup/settings", "name=Changed&audienceScoreBottomOffsetPx="+bad)
+			assert.Equal(t, 200, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), "nonnegative whole number")
+			assert.Equal(t, 75, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+			assert.Equal(t, "Untitled Event", web.arena.EventSettings.Name)
+		})
+	}
+}
+
+func TestSetupSettingsAudienceOffsetDefaultAndOmission(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.Zero(t, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+	web.arena.EventSettings.AudienceScoreBottomOffsetPx = 75
+	recorder := web.postHttpResponse("/setup/settings", "name=Test")
+	assert.Equal(t, 303, recorder.Code)
+	assert.Equal(t, 75, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+	recorder = web.postHttpResponse("/setup/settings", "audienceScoreBottomOffsetPx=0")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err := web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.Zero(t, stored.AudienceScoreBottomOffsetPx)
+}
+
+func TestSetupSettingsAudienceChromaColor(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.False(t, web.arena.EventSettings.AudienceChromaOverrideEnabled)
+	page := web.getHttpResponse("/setup/settings")
+	assert.Contains(t, page.Body.String(), `value="#00ff00"`)
+	recorder := web.postHttpResponse("/setup/settings",
+		"audienceChromaOptionsPresent=1&audienceChromaOverrideEnabled=on&audienceChromaColor=%2312ABef")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err := web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.True(t, stored.AudienceChromaOverrideEnabled)
+	assert.Equal(t, "#12abef", stored.AudienceChromaColor)
+	page = web.getHttpResponse("/setup/settings")
+	assert.Contains(t, page.Body.String(), `value="#12abef"`)
+
+	// Older forms retain the override, while unchecking it explicitly disables it.
+	recorder = web.postHttpResponse("/setup/settings", "name=Test")
+	assert.Equal(t, 303, recorder.Code)
+	assert.True(t, web.arena.EventSettings.AudienceChromaOverrideEnabled)
+	assert.Equal(t, "#12abef", web.arena.EventSettings.AudienceChromaColor)
+	recorder = web.postHttpResponse("/setup/settings",
+		"audienceChromaOptionsPresent=1&audienceChromaColor=%2312abef")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err = web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.False(t, stored.AudienceChromaOverrideEnabled)
+}
+
+func TestSetupSettingsAudienceChromaValidation(t *testing.T) {
+	for _, bad := range []string{"", "red", "%23fff", "%23gg0000", "%230000000", "%23-00001"} {
+		t.Run(bad, func(t *testing.T) {
+			web := setupTestWeb(t)
+			recorder := web.postHttpResponse("/setup/settings",
+				"name=Changed&audienceChromaOptionsPresent=1&audienceChromaColor="+bad)
+			assert.Equal(t, 200, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), "six-digit hex color")
+			assert.Equal(t, "Untitled Event", web.arena.EventSettings.Name)
+			assert.Empty(t, web.arena.EventSettings.AudienceChromaColor)
+		})
+	}
+}
+
+func TestSetupSettingsAudienceCamera(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.False(t, web.arena.EventSettings.AudienceCameraBehindHeadTable)
+	for _, enabled := range []bool{true, false} {
+		form := "audienceCameraOptionsPresent=1"
+		if enabled {
+			form += "&audienceCameraBehindHeadTable=on"
+		}
+		recorder := web.postHttpResponse("/setup/settings", form)
+		assert.Equal(t, 303, recorder.Code)
+		stored, err := web.arena.Database.GetEventSettings()
+		assert.NoError(t, err)
+		assert.Equal(t, enabled, stored.AudienceCameraBehindHeadTable)
+		// An older form omitting the option must preserve the saved value.
+		recorder = web.postHttpResponse("/setup/settings", "name=Test")
+		assert.Equal(t, 303, recorder.Code)
+		assert.Equal(t, enabled, web.arena.EventSettings.AudienceCameraBehindHeadTable)
 	}
 }

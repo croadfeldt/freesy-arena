@@ -28,7 +28,9 @@ const sponsorTextTemplate = Handlebars.compile($("#sponsorTextTemplate").html())
 // Constants for overlay positioning. The CSS is the source of truth for the values that represent initial state.
 const overlayCenteringTopUp = "-130px";
 const overlayCenteringBottomHideParams = {queue: false, bottom: $("#overlayCentering").css("bottom")};
-const overlayCenteringBottomShowParams = {queue: false, bottom: "0px"};
+const overlayCenteringBottomShowParams = {
+  queue: false, bottom: ($("#overlayCentering").attr("data-bottom-offset-px") || "0") + "px"
+};
 const overlayCenteringTopHideParams = {queue: false, top: overlayCenteringTopUp};
 const overlayCenteringTopShowParams = {queue: false, top: "50px"};
 const eventMatchInfoDown = "30px";
@@ -883,7 +885,7 @@ const setTeamInfo = function (side, position, teamId, cards, rankings) {
 $(function () {
   // Read the configuration for this display from the URL query string.
   const urlParams = new URLSearchParams(window.location.search);
-  document.body.style.backgroundColor = urlParams.get("background");
+  document.body.style.backgroundColor = document.body.dataset.chromaColor || urlParams.get("background");
   // Use the same audience-display placement preference for both information bars.
   // Unset/invalid values retain the existing bottom-positioned default.
   const overlayLocation = urlParams.get("overlayLocation") === "top" ? "top" : "bottom";
