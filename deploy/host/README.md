@@ -10,8 +10,9 @@ Between matches, as `ansible` on the field server:
 
     ~/freesy-arena-2026/deploy/freezy-update
 
-It refuses while a match is running or its results are not committed yet. It pulls the checkout and, if
-the host files changed, runs `host_setup.yaml` (and rebuilds Kea if `deploy/kea` changed). Then, as the
+It refuses while a match is running or its results are not committed yet. It pulls the checkout, runs
+`host_setup.yaml` (which changes nothing that is already right), and rebuilds Kea if its image was not
+built from the checkout's `deploy/kea`. Then, as the
 arena's account, it pulls that account's checkout, puts the arena on the new image and restarts it, and
 loads the match that was loaded before. The image is pulled from `freezy_arena_image_source` in
 `ansible/vars.yaml` (set it in `/etc/freezy-net/vars.yaml`), or built on the field server if that is
