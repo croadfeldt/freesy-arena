@@ -54,7 +54,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil || value < 0 {
 			web.renderSettingsWithStatus(
 				w, r, "Audience score offset must be a nonnegative whole number of pixels.",
-				"automation", http.StatusOK,
+				"displays", http.StatusOK,
 			)
 			return
 		}
@@ -82,7 +82,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 		if !validColor {
 			web.renderSettingsWithStatus(
 				w, r, "Audience chroma color must be a six-digit hex color, such as #00ff00.",
-				"automation", http.StatusOK,
+				"displays", http.StatusOK,
 			)
 			return
 		}
@@ -108,7 +108,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil || value < 1 || value > 600 {
 				web.renderSettingsWithStatus(
 					w, r, "Audience display timers must be whole numbers between 1 and 600 seconds.",
-					"automation", http.StatusOK,
+					"displays", http.StatusOK,
 				)
 				return
 			}
@@ -116,7 +116,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 		} else if _, submitted := r.PostForm[entry.key]; submitted {
 			web.renderSettingsWithStatus(
 				w, r, "Audience display timers must be whole numbers between 1 and 600 seconds.",
-				"automation", http.StatusOK,
+				"displays", http.StatusOK,
 			)
 			return
 		}
@@ -132,14 +132,14 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 		seen := make(map[string]bool)
 		if len(selected) > 4 {
 			web.renderSettingsWithStatus(
-				w, r, "Choose no more than four rankings statistics.", "automation", http.StatusOK,
+				w, r, "Choose no more than four rankings statistics.", "displays", http.StatusOK,
 			)
 			return
 		}
 		for _, option := range selected {
 			if !allowed[option] || seen[option] {
 				web.renderSettingsWithStatus(
-					w, r, "Invalid or duplicate rankings statistic.", "automation", http.StatusOK,
+					w, r, "Invalid or duplicate rankings statistic.", "displays", http.StatusOK,
 				)
 				return
 			}
@@ -342,8 +342,11 @@ func settingsSaveAllowed(matchState field.MatchState) bool {
 
 func settingsTabFromRequest(r *http.Request) string {
 	switch r.PostFormValue("activeSettingsTab") {
-	case "event", "game", "field", "publishing", "automation":
+	case "event", "game", "field", "publishing", "displays", "integrations":
 		return r.PostFormValue("activeSettingsTab")
+	case "automation":
+		// The tab that held the display settings before they were split into Displays and Integrations.
+		return "displays"
 	default:
 		return "event"
 	}

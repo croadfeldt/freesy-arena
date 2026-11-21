@@ -41,9 +41,15 @@ UI for configuring event settings.
             </button>
           </li>
           <li class="nav-item">
-            <button class="nav-link" id="automation-tab" data-bs-toggle="tab" data-bs-target="#automation" type="button"
+            <button class="nav-link" id="displays-tab" data-bs-toggle="tab" data-bs-target="#displays" type="button"
               role="tab">
-              Automation
+              Displays
+            </button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link" id="integrations-tab" data-bs-toggle="tab" data-bs-target="#integrations"
+              type="button" role="tab">
+              Integrations
             </button>
           </li>
         </ul>
@@ -136,26 +142,16 @@ UI for configuring event settings.
                   </div>
                 </div>
               </div>
-              <div class="row mb-3">
-                <label class="col-lg-6 control-label" for="selectionShowUnpickedTeams">
-                  Show Unpicked Teams On Overlay
-                </label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="selectionShowUnpickedTeams"
-                    name="selectionShowUnpickedTeams" {{if .SelectionShowUnpickedTeams}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="selectionShowUnpickedTeams" name="selectionShowUnpickedTeams" {{if .SelectionShowUnpickedTeams}} checked{{end}}>
+                <label class="form-check-label" for="selectionShowUnpickedTeams">Show Unpicked Teams On Overlay</label>
               </div>
             </fieldset>
             <fieldset class="mb-4">
               <legend>Team Info Download</legend>
-              <div class="row mb-3">
-                <label class="col-lg-6 control-label" for="tbaDownloadEnabled">
-                  Enable Team Info Download (From The Blue Alliance)
-                </label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="tbaDownloadEnabled"
-                    name="tbaDownloadEnabled" {{if .TbaDownloadEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="tbaDownloadEnabled" name="tbaDownloadEnabled" {{if .TbaDownloadEnabled}} checked{{end}}>
+                <label class="form-check-label" for="tbaDownloadEnabled">Enable Team Info Download (From The Blue Alliance)</label>
               </div>
             </fieldset>
             <fieldset class="mb-4">
@@ -166,33 +162,6 @@ UI for configuring event settings.
                 <div class="col-lg-6">
                   <input type="password" class="form-control" name="adminPassword" value="{{.AdminPassword}}">
                 </div>
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend>Database Operations</legend>
-              <div>
-                <a href="/setup/db/save" class="btn btn-primary">Save Copy of Database</a>
-              </div>
-              <div class="mt-2">
-                <button type="button" class="btn btn-warning" onclick="$('#uploadDatabase').modal('show');">
-                  Load Database from Backup
-                </button>
-              </div>
-              <div class="mt-2">
-                <button type="button" class="btn btn-danger" onclick="$('#confirmClearDataPlayoff').modal('show');">
-                  Clear Playoff/Alliance Data
-                </button>
-              </div>
-              <div class="mt-2">
-                <button type="button" class="btn btn-danger"
-                  onclick="$('#confirmClearDataQualification').modal('show');">
-                  Clear Qualification Data
-                </button>
-              </div>
-              <div class="mt-2">
-                <button type="button" class="btn btn-danger" onclick="$('#confirmClearDataPractice').modal('show');">
-                  Clear Practice Data
-                </button>
               </div>
             </fieldset>
           </div>
@@ -262,13 +231,9 @@ UI for configuring event settings.
               <p>Enable this setting to isolate each team on its own SSID and VLAN. It needs a Vivid-Hosting VH-113
                 access point, and either the field server routing the team VLANs (see deploy/host) or a Cisco
                 Catalyst 3500-series switch.</p>
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label"
-                  for="networkSecurityEnabled">Enable advanced network security</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="networkSecurityEnabled"
-                    name="networkSecurityEnabled" {{if .NetworkSecurityEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="networkSecurityEnabled" name="networkSecurityEnabled" {{if .NetworkSecurityEnabled}} checked{{end}}>
+                <label class="form-check-label" for="networkSecurityEnabled">Enable advanced network security</label>
               </div>
               <div class="row mb-3">
                 <label class="col-lg-6 control-label" for="switchType">Team wired networks</label>
@@ -326,13 +291,9 @@ UI for configuring event settings.
                 if advanced network security is enabled above.</p>
               <p class="settings-needs-note" id="sccNeedsNetwork">Turn on advanced network security above to use this.</p>
               <div id="sccSettings">
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label"
-                  for="sccManagementEnabled">Enable SCC switch management</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="sccManagementEnabled"
-                    name="sccManagementEnabled" {{if .SCCManagementEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="sccManagementEnabled" name="sccManagementEnabled" {{if .SCCManagementEnabled}} checked{{end}}>
+                <label class="form-check-label" for="sccManagementEnabled">Enable SCC switch management</label>
               </div>
               <div class="row mb-3">
                 <label class="col-lg-6 control-label">Red SCC Address</label>
@@ -383,14 +344,9 @@ UI for configuring event settings.
             </fieldset>
             <fieldset class="mb-4">
                 <legend>Alternate IO</legend>
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label" for="alternateIOEnabled">
-                  Enable Alternate IO (IE: Raspberry Pi)
-                </label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="alternateIOEnabled"
-                    name="alternateIOEnabled"{{if .AlternateIOEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="alternateIOEnabled" name="alternateIOEnabled"{{if .AlternateIOEnabled}} checked{{end}}>
+                <label class="form-check-label" for="alternateIOEnabled">Enable Alternate IO (IE: Raspberry Pi)</label>
               </div>
               <div class="row mb-3">
                 <label class="col-lg-6 control-label">Score Table IO Address</label>
@@ -499,12 +455,9 @@ UI for configuring event settings.
               <p>When enabled, the Driver Station software will prompt teams to allow the arena to connect rather
                 than automatically connecting, and will preserve the ability to use the spacebar for robot
                 disablement. Consider enabling this setting when physical E-Stop buttons are not present.</p>
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label" for="useLiteUdpPort"> Lite Mode </label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="useLiteUdpPort" name="useLiteUdpPort"
-                    {{if .UseLiteUdpPort}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="useLiteUdpPort" name="useLiteUdpPort" {{if .UseLiteUdpPort}} checked{{end}}>
+                <label class="form-check-label" for="useLiteUdpPort">Lite Mode</label>
               </div>
             </fieldset>
           </div>
@@ -512,13 +465,9 @@ UI for configuring event settings.
             <fieldset class="mb-4">
               <legend>Publishing</legend>
               <p>Contact The Blue Alliance to obtain an event code and credentials.</p>
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label"
-                  for="tbaPublishingEnabled">Enable The Blue Alliance publishing</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="tbaPublishingEnabled"
-                    name="tbaPublishingEnabled" {{if .TbaPublishingEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="tbaPublishingEnabled" name="tbaPublishingEnabled" {{if .TbaPublishingEnabled}} checked{{end}}>
+                <label class="form-check-label" for="tbaPublishingEnabled">Enable The Blue Alliance publishing</label>
               </div>
               <div class="row mb-3">
                 <label class="col-lg-6 control-label">TBA Event Code</label>
@@ -559,7 +508,7 @@ UI for configuring event settings.
               {{end}}
             </div>
           </div>
-          <div class="tab-pane" id="automation" role="tabpanel">
+          <div class="tab-pane" id="displays" role="tabpanel">
             <fieldset class="mb-4">
               <legend>Audience Score Position and Chroma Key</legend>
               <div class="row mb-3 align-items-center">
@@ -691,16 +640,26 @@ UI for configuring event settings.
               <p class="small text-body-secondary">Rank and team number are always visible.</p>
             </fieldset>
             <fieldset class="mb-4">
+              <legend>Alliance Station Enhancements</legend>
+              <p>Enable this setting to allow the driver station displays to flash orange to indiciate an e-stop, or solid orange
+                to indiciate an a-stop. When enabled, the driver station will only flash outside of the match. <b>Display reload required for changes to take effect.</b>
+              </p>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="flashDSEnabled" name="flashDSEnabled" {{if .FlashDSEnabled}}checked{{end}}>
+                <label class="form-check-label" for="flashDSEnabled">Enable DS E/A Stop Alerting</label>
+              </div>
+            </fieldset>
+          </div>
+          <div class="tab-pane" id="integrations" role="tabpanel">
+            <fieldset class="mb-4">
               <legend>Nexus</legend>
               <p>Automatically populate practice and playoff match lineups from Nexus. Uses the same event code as TBA-
                 configure it on the publishing tab.</p>
               <p>When enabled, Nexus is the source of truth for lineups and they can not
                 be overridden by the scorekeeper. To make changes, update the lineup in Nexus or disable this setting.</p>
-              <div class="row mb-5">
-                <label class="col-lg-8 control-label" for="nexusEnabled">Enable Nexus lineups</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="nexusEnabled" name="nexusEnabled" {{if .NexusEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="nexusEnabled" name="nexusEnabled" {{if .NexusEnabled}} checked{{end}}>
+                <label class="form-check-label" for="nexusEnabled">Enable Nexus lineups</label>
               </div>
               <p><b>Nexus AutoQueue</b>: The queuing status in Nexus can be automatically updated when match scores are
                 committed. To generate an AutoQueue key, the TBA event key must be set and you must log in with a Nexus
@@ -708,11 +667,9 @@ UI for configuring event settings.
               <p class="settings-needs-note" id="nexusNeedsTba">Set the TBA event code on the Publishing tab to use
                 AutoQueue.</p>
               <div id="nexusAutoQueueSettings">
-              <div class="row mb-3">
-                <label class="col-lg-8 control-label" for="nexusAutoQueueEnabled">Enable Nexus AutoQueue</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" id="nexusAutoQueueEnabled" name="nexusAutoQueueEnabled" {{if .NexusAutoQueueEnabled}} checked{{end}}>
-                </div>
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="nexusAutoQueueEnabled" name="nexusAutoQueueEnabled" {{if .NexusAutoQueueEnabled}} checked{{end}}>
+                <label class="form-check-label" for="nexusAutoQueueEnabled">Enable Nexus AutoQueue</label>
               </div>
               <div class="row mb-3">
                 <label class="col-lg-6 control-label">Nexus AutoQueue key</label>
@@ -897,18 +854,6 @@ UI for configuring event settings.
                 </div>
               </div>
             </fieldset>
-            <fieldset class="mb-4">
-              <legend>Alliance Station Enhancements</legend>
-              <p>Enable this setting to allow the driver station displays to flash orange to indiciate an e-stop, or solid orange
-                to indiciate an a-stop. When enabled, the driver station will only flash outside of the match. <b>Display reload required for changes to take effect.</b>
-              </p>
-              <div class="row mb-3">
-                <label class="col-lg-6 control-label">Enable DS E/A Stop Alerting</label>
-                <div class="col-lg-1 checkbox">
-                  <input type="checkbox" name="flashDSEnabled" {{if .FlashDSEnabled}}checked{{end}}>
-                </div>
-              </div>
-            </fieldset>
           </div>
           <div class="row justify-content-center settings-save-bar">
             <div class="col-lg-3 align-items-center">
@@ -916,6 +861,17 @@ UI for configuring event settings.
             </div>
           </div>
       </form>
+    </div>
+    <div class="card card-body bg-body-tertiary mt-4">
+      <h5>Database</h5>
+      <p class="form-text">These act straight away; they are not part of Save All Settings.</p>
+      <div class="d-flex flex-wrap gap-2">
+        <a href="/setup/db/save" class="btn btn-primary">Save Copy of Database</a>
+        <button type="button" class="btn btn-warning" onclick="$('#uploadDatabase').modal('show');"> Load Database from Backup </button>
+        <button type="button" class="btn btn-danger" onclick="$('#confirmClearDataPlayoff').modal('show');"> Clear Playoff/Alliance Data </button>
+        <button type="button" class="btn btn-danger" onclick="$('#confirmClearDataQualification').modal('show');"> Clear Qualification Data </button>
+        <button type="button" class="btn btn-danger" onclick="$('#confirmClearDataPractice').modal('show');"> Clear Practice Data </button>
+      </div>
     </div>
   </div>
 </div>
@@ -1016,6 +972,9 @@ UI for configuring event settings.
   // Handle initial tab selection based on URL fragment.
   document.addEventListener("DOMContentLoaded", function () {
     let hash = window.location.hash;
+    if (hash === "#automation") {
+      hash = "#displays";
+    }
     if (!hash) {
       hash = "#{{.ActiveSettingsTab}}";
     }

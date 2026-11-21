@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -368,7 +369,8 @@ func TestSetupSettingsAudienceOptions(t *testing.T) {
 			"audienceRankingsOption=rp&audienceRankingsOption=nextMatch"+
 			"&autoDurationSec=20&pauseDurationSec=3&transitionShiftDurationSec=10&shiftDurationSec=25&endgameDurationSec=30&energizedBonusThreshold=100&superchargedBonusThreshold=360&traversalBonusThreshold=50")
 	assert.Equal(t, 303, recorder.Code)
-	assert.Equal(t, "/setup/settings#automation", recorder.Header().Get("Location"))
+	// "automation" is the tab these settings were on before; it now leads to Displays.
+	assert.Equal(t, "/setup/settings#displays", recorder.Header().Get("Location"))
 	settings := web.arena.EventSettings
 	assert.True(t, settings.AutoAudienceDisplayEnabled)
 	assert.Equal(t, 25, settings.AudienceScoreSeconds())
@@ -507,4 +509,30 @@ func TestSetupSettingsMarksSettingsThatNeedAnother(t *testing.T) {
 	assert.Contains(t, body, `$(this).find(":input").prop("disabled", false)`)
 	assert.Contains(t, body, "settings-save-bar")
 	assert.NotContains(t, body, "alterntive")
+}
+
+func TestSetupSettingsTabs(t *testing.T) {
+	web := setupTestWeb(t)
+	body := web.getHttpResponse("/setup/settings").Body.String()
+
+	for _, tab := range []string{"event", "game", "field", "publishing", "displays", "integrations"} {
+		assert.Contains(t, body, `data-bs-target="#`+tab+`"`)
+		assert.Contains(t, body, `class="tab-pane" id="`+tab+`"`)
+		recorder := web.postHttpResponse("/setup/settings", "activeSettingsTab="+tab)
+		assert.Equal(t, "/setup/settings#"+tab, recorder.Header().Get("Location"))
+	}
+	assert.NotContains(t, body, `id="automation"`)
+
+	// Integrations holds Nexus, video recording and Companion; Displays keeps the audience settings.
+	integrations := body[strings.Index(body, `id="integrations" role="tabpanel"`):]
+	assert.Contains(t, integrations[:strings.Index(integrations, "</form>")], "<legend>Nexus</legend>")
+	displays := body[strings.Index(body, `id="displays" role="tabpanel"`):strings.Index(body, `id="integrations" role="tabpanel"`)]
+	assert.Contains(t, displays, "Audience Display Automation")
+	assert.NotContains(t, displays, "<legend>Nexus</legend>")
+
+	// The database buttons act at once, so they sit outside the settings form.
+	form := body[strings.Index(body, `<form id="settingsForm"`):]
+	form = form[:strings.Index(form, "</form>")]
+	assert.NotContains(t, form, "Clear Qualification Data")
+	assert.Contains(t, body, "<h5>Database</h5>")
 }
