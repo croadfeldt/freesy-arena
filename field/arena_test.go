@@ -1471,3 +1471,27 @@ func TestAudienceDisplayAutomationTimeout(t *testing.T) {
 	arena.automateAudienceDisplay(&model.Match{Type: model.Qualification}, func(time.Duration) {})
 	assert.Equal(t, "timeout", arena.AudienceDisplayMode)
 }
+
+func TestArenaStartBlockedByQuietBoard(t *testing.T) {
+	arena := setupTestArena(t)
+	for _, station := range []string{"R1", "R2", "R3", "B1", "B2", "B3"} {
+		arena.AllianceStations[station].EStop = false
+		arena.AllianceStations[station].Bypass = true
+	}
+	assert.Nil(t, arena.checkCanStartMatch())
+
+	// A hub board turned on in the settings blocks the start until it reports.
+	arena.EventSettings.BlueHubBoardEnabled = true
+	assert.Nil(t, arena.Database.UpdateEventSettings(arena.EventSettings))
+	assert.Nil(t, arena.LoadSettings())
+	for _, station := range []string{"R1", "R2", "R3", "B1", "B2", "B3"} {
+		arena.AllianceStations[station].EStop = false
+		arena.AllianceStations[station].Bypass = true
+	}
+	err := arena.checkCanStartMatch()
+	if assert.NotNil(t, err) {
+		assert.Contains(t, err.Error(), `ESP32 board "blue hub" has not reported in the last 2s`)
+	}
+	arena.Esp32.ReportRegisters([]int{2})
+	assert.Nil(t, arena.checkCanStartMatch())
+}

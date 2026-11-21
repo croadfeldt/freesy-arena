@@ -28,6 +28,14 @@ type Esp32 interface {
 	SetRedAllianceStationEstopAddress(string) 
 	SetBlueAllianceStationEstopAddress(string) 
 	SetPlc(Plc)
+	SetHubBoardsExpected(red, blue bool)
+	IsRedHubEnabled() bool
+	IsBlueHubEnabled() bool
+	IsRedHubHealthy() bool
+	IsBlueHubHealthy() bool
+	ReportInputs(channels []int)
+	ReportRegisters(registers []int)
+	LostBoards() []Board
 }
 
 type Esp32IO struct {
@@ -38,6 +46,7 @@ type Esp32IO struct {
 	RedEstopsHealthy 	bool
 	BlueEstopsHealthy 	bool
 	Plc Plc
+	reports boardReports
 }
 const LoopPeriodMs = 1000 // Define the loop period in milliseconds
 
@@ -107,6 +116,7 @@ func isDevicePresent(ip string, port string) error {
 // Run starts the ESP32 IO monitoring loop.
 func (esp32 *Esp32IO) Run() {
 	for {
+		esp32.LostBoards()
 		// Check if the Score Table Estops are reachable.
 		if !esp32.IsScoreTableIOEnabled() {
 			// If the Score Table is not enabled, don't check it.
@@ -187,15 +197,68 @@ func (esp32 *Esp32IO) IsBlueEstopsEnabled() bool {
 
 // Returns the health status of the alternate IO.
 func (esp32 *Esp32IO) IsScoreTableHealthy() bool {
-	return esp32.scoreTableHealthy
+	return esp32.scoreTableHealthy && esp32.reports.isReporting(BoardScoreTable)
 }
 
 // Returns the health status of the alternate IO.
 func (esp32 *Esp32IO) IsRedEstopsHealthy() bool {
-	return esp32.RedEstopsHealthy
+	return esp32.RedEstopsHealthy && esp32.reports.isReporting(BoardRedEstops)
 }
 
 // Returns the health status of the alternate IO.
 func (esp32 *Esp32IO) IsBlueEstopsHealthy() bool {
-	return esp32.BlueEstopsHealthy
+	return esp32.BlueEstopsHealthy && esp32.reports.isReporting(BoardBlueEstops)
+}
+
+// Sets whether a red and a blue hub board are expected to report, from the event settings.
+func (esp32 *Esp32IO) SetHubBoardsExpected(red, blue bool) {
+	esp32.reports.setExpected(BoardRedHub, red)
+	esp32.reports.setExpected(BoardBlueHub, blue)
+}
+
+func (esp32 *Esp32IO) IsRedHubEnabled() bool {
+	esp32.reports.mutex.Lock()
+	defer esp32.reports.mutex.Unlock()
+	return esp32.reports.expected[BoardRedHub]
+}
+
+func (esp32 *Esp32IO) IsBlueHubEnabled() bool {
+	esp32.reports.mutex.Lock()
+	defer esp32.reports.mutex.Unlock()
+	return esp32.reports.expected[BoardBlueHub]
+}
+
+func (esp32 *Esp32IO) IsRedHubHealthy() bool {
+	return esp32.reports.isReporting(BoardRedHub)
+}
+
+func (esp32 *Esp32IO) IsBlueHubHealthy() bool {
+	return esp32.reports.isReporting(BoardBlueHub)
+}
+
+// Records that the boards owning these PLC inputs have just reported.
+func (esp32 *Esp32IO) ReportInputs(channels []int) {
+	for _, channel := range channels {
+		if board, ok := boardForInput(channel); ok {
+			esp32.reports.record(board)
+		}
+	}
+}
+
+// Records that the boards owning these PLC registers have just reported.
+func (esp32 *Esp32IO) ReportRegisters(registers []int) {
+	for _, index := range registers {
+		if board, ok := boardForRegister(index); ok {
+			esp32.reports.record(board)
+		}
+	}
+}
+
+// Returns the expected boards that have not reported in the last BoardReportTimeout. A stop board is expected when
+// its address is set; a hub board when its event setting is on.
+func (esp32 *Esp32IO) LostBoards() []Board {
+	esp32.reports.setExpected(BoardScoreTable, esp32.IsScoreTableIOEnabled())
+	esp32.reports.setExpected(BoardRedEstops, esp32.IsRedEstopsEnabled())
+	esp32.reports.setExpected(BoardBlueEstops, esp32.IsBlueEstopsEnabled())
+	return esp32.reports.lostBoards()
 }

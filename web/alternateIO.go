@@ -45,6 +45,11 @@ func (web *Web) eStopStatePostHandler(w http.ResponseWriter, r *http.Request) {
 	for _, item := range payload {
     	web.arena.Plc.SetAlternateIOStopState(item.Channel, item.State)
 	}
+	channels := make([]int, len(payload))
+	for i, item := range payload {
+		channels[i] = item.Channel
+	}
+	web.arena.Esp32.ReportInputs(channels)
 
 	// Respond with success.
 	w.WriteHeader(http.StatusOK)
@@ -332,6 +337,12 @@ func (web *Web) handlePLCWebSocketMessage(ws *websocket.Websocket, messageType s
 		}
 
 		// Apply changes exactly like your HTTP handler
+		registers := make([]int, len(payloads))
+		for i, item := range payloads {
+			registers[i] = item.Register
+		}
+		web.arena.Esp32.ReportRegisters(registers)
+
 		for _, item := range payloads {
 			web.arena.Plc.SetRegisterValue(item.Register, uint16(item.CValue))  // Convert int16 → uint16
 			//log.Printf("WebSocket: Set PLC register %d to %d", item.Register, item.CValue)
@@ -371,6 +382,11 @@ func (web *Web) handlePLCWebSocketMessage(ws *websocket.Websocket, messageType s
         for _, item := range payloads {
             web.arena.Plc.SetAlternateIOStopState(item.Channel, item.State)
         }
+        channels := make([]int, len(payloads))
+        for i, item := range payloads {
+            channels[i] = item.Channel
+        }
+        web.arena.Esp32.ReportInputs(channels)
 
         ws.Write("plcInputSetSuccess", map[string]any{
             "count":   len(payloads),

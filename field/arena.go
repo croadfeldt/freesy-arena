@@ -237,6 +237,7 @@ func (arena *Arena) LoadSettings() error {
 	arena.Esp32.SetScoreTableAddress(settings.ScoreTableEstopAddress)
 	arena.Esp32.SetRedAllianceStationEstopAddress(settings.RedAllianceStationEstopAddress)
 	arena.Esp32.SetBlueAllianceStationEstopAddress(settings.BlueAllianceStationEstopAddress)
+	arena.Esp32.SetHubBoardsExpected(settings.RedHubBoardEnabled, settings.BlueHubBoardEnabled)
 	arena.Leds.SetUniverseMode(settings.LedUniverseMode)
 	arena.TbaClient = partner.NewTbaClient(settings.TbaEventCode, settings.TbaSecretId, settings.TbaSecret)
 	arena.NexusClient = partner.NewNexusClient(settings.TbaEventCode, settings.NexusAutoQueueKey)
@@ -1217,6 +1218,13 @@ func (arena *Arena) getStartMatchConditions() []string {
 				fmt.Sprintf("PLC ArmorBlock %q is not connected", name),
 			)
 		}
+	}
+
+	for _, board := range arena.Esp32.LostBoards() {
+		conditions = append(
+			conditions,
+			fmt.Sprintf("ESP32 board %q has not reported in the last %v", board.String(), plc.BoardReportTimeout),
+		)
 	}
 
 	return conditions

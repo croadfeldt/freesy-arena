@@ -350,7 +350,20 @@ const handleArenaStatus = function (data) {
     $("#blueEstopsIO").text("Blue Estops Disabled");
     $("#blueEstopsIO").attr("data-ready", 0);
   }
+  updateBoardBadge("#redHubIO", "Red Hub", data.RedHubEnabled, data.RedHubIsHealthy);
+  updateBoardBadge("#blueHubIO", "Blue Hub", data.BlueHubEnabled, data.BlueHubIsHealthy);
   $("#ftaReady").attr("data-ready", data.IsFtaReady);
+};
+
+// Shows whether an ESP32 board is off, reporting, or quiet, in the same style as the stop board badges.
+const updateBoardBadge = function (selector, name, enabled, healthy) {
+  if (!enabled) {
+    $(selector).text(name + " Disabled").attr("data-ready", 0);
+  } else if (healthy) {
+    $(selector).text(name + " Connected").attr("data-ready", 2);
+  } else {
+    $(selector).text(name + " Not Connected").attr("data-ready", 1);
+  }
 };
 
 // Handles a websocket message to update the teams for the current match.

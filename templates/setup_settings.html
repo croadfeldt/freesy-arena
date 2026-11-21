@@ -410,6 +410,28 @@ UI for configuring event settings.
                   <input type="text" class="form-control" name="BlueAllianceStationEstopAddress" value="{{.BlueAllianceStationEstopAddress}}">
                 </div>
               </div>
+              <div class="row mb-3">
+                <label class="col-lg-8 control-label" for="redHubBoardEnabled">
+                  Red hub board (ESP32) is installed
+                </label>
+                <div class="col-lg-1 checkbox">
+                  <input type="checkbox" id="redHubBoardEnabled"
+                    name="redHubBoardEnabled"{{if .RedHubBoardEnabled}} checked{{end}}>
+                </div>
+              </div>
+              <div class="row mb-3">
+                <label class="col-lg-8 control-label" for="blueHubBoardEnabled">
+                  Blue hub board (ESP32) is installed
+                </label>
+                <div class="col-lg-1 checkbox">
+                  <input type="checkbox" id="blueHubBoardEnabled"
+                    name="blueHubBoardEnabled"{{if .BlueHubBoardEnabled}} checked{{end}}>
+                </div>
+              </div>
+              <p class="form-text text-muted">
+                A stop board with an address set, or a hub board checked here, must report every 2 seconds. Match play
+                shows a board that goes quiet as not connected, and a match cannot start until it reports again.
+              </p>
             </fieldset>
             <fieldset class="mb-4">
               <legend>Team Signs</legend>
