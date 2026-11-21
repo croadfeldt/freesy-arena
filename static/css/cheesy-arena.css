@@ -178,6 +178,10 @@
 .badge-status[data-status=CONFIGURING], .badge-status[data-status=DISABLED] {
   background-color: #08f;
 }
+/* Not configured since the arena started: nothing has failed yet. */
+.badge-status[data-status=UNKNOWN] {
+  background-color: #666;
+}
 .badge-status[data-status=ACTIVE] {
   background-color: #0c6;
 }

@@ -1135,9 +1135,15 @@ func (arena *Arena) setupNetwork(teams [6]*model.Team, isPreload bool) {
 	} else if arena.preloadedTeams != nil {
 		preloadedTeams := *arena.preloadedTeams
 		arena.preloadedTeams = nil
-		if reflect.DeepEqual(teams, preloadedTeams) {
-			// Skip configuring the network; this is the same set of teams that was preloaded.
+		// Skip configuring the network if this is the same set of teams that was preloaded, unless the preload
+		// failed: then the network may still be set up for the previous match, so configure it again.
+		switchStatus := arena.teamSwitchStatus()
+		if reflect.DeepEqual(teams, preloadedTeams) && (switchStatus == "ACTIVE" || switchStatus == "CONFIGURING") {
 			return
+		}
+		if reflect.DeepEqual(teams, preloadedTeams) {
+			log.Printf("Preloading the network for this match did not work (switch %s); configuring it again.",
+				switchStatus)
 		}
 	}
 
