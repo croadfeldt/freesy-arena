@@ -1,0 +1,57 @@
+#!/usr/bin/bash
+# Make firewalld on the field server let driver stations reach the arena:
+#
+#   freezy-firewalld-zones FMS_CONNECTION TEAM_CONNECTION...
+#
+# - The team VLANs go in firewalld's `trusted` zone. freezy-field.nft already decides what a team VLAN
+#   may reach; firewalld's default zone would also drop the driver station's own packets to the FMS
+#   (UDP 1160, TCP 1750) while still answering its ping, so a driver station could see the arena and
+#   the arena never saw the driver station.
+# - The zone of the FMS address accepts the arena's ports: the web pages (TCP 8080) and the driver
+#   station ports, for a driver station plugged into the admin network.
+#
+# Each change is made to the saved configuration and, if firewalld is running, to the running one, with
+# no reload and no interface brought down. firewalld is never started or stopped. Prints "changed" if
+# it changed anything. host_setup.yaml runs it.
+set -euo pipefail
+fms=$1; shift
+arena_ports=(8080/tcp 1750/tcp 1160/udp)
+changed=
+
+if ! command -v firewall-cmd >/dev/null && ! command -v firewall-offline-cmd >/dev/null; then
+    echo "firewalld is not installed; nothing to do"
+    exit 0
+fi
+if firewall-cmd --state >/dev/null 2>&1; then running=1; else running=; fi
+
+# NetworkManager holds each connection's zone and tells firewalld whenever firewalld starts.
+for c in "$@"; do
+    if [ "$(nmcli -g connection.zone connection show "$c")" != trusted ]; then
+        nmcli connection modify "$c" connection.zone trusted
+        changed=1
+    fi
+    if [ -n "$running" ] && [ "$(firewall-cmd --get-zone-of-interface="$c" 2>/dev/null)" != trusted ]; then
+        firewall-cmd -q --zone=trusted --change-interface="$c"
+        changed=1
+    fi
+done
+
+zone=$(nmcli -g connection.zone connection show "$fms")
+if [ -z "$zone" ]; then
+    if [ -n "$running" ]; then zone=$(firewall-cmd --get-default-zone)
+    else zone=$(firewall-offline-cmd --get-default-zone); fi
+fi
+for p in "${arena_ports[@]}"; do
+    if [ -n "$running" ]; then
+        firewall-cmd -q --permanent --zone="$zone" --query-port="$p" \
+            || { firewall-cmd -q --permanent --zone="$zone" --add-port="$p"; changed=1; }
+        firewall-cmd -q --zone="$zone" --query-port="$p" \
+            || { firewall-cmd -q --zone="$zone" --add-port="$p"; changed=1; }
+    else
+        firewall-offline-cmd -q --zone="$zone" --query-port="$p" \
+            || { firewall-offline-cmd -q --zone="$zone" --add-port="$p"; changed=1; }
+    fi
+done
+
+[ -n "$running" ] || echo "firewalld is not running; the zones apply when it starts"
+[ -z "$changed" ] || echo changed
