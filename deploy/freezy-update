@@ -10,9 +10,9 @@ Run it from a checkout of this repository, as a user with sudo (ansible) to upda
 arena's account (cheesy) to update the arena only. In order, it:
 
 1. refuses while a match is running or its results are not committed yet (--force overrides);
-2. pulls this checkout. If the host files changed (deploy/host, deploy/kea), it rebuilds the Kea image
-   if that changed and runs host_setup.yaml. Run as the arena's account it cannot, so it stops there
-   and says what to run;
+2. pulls this checkout, rebuilds the Kea image if it was not built from this deploy/kea, and runs
+   host_setup.yaml, which changes nothing that is already right. Run as the arena's account it cannot,
+   so if the pull changed the host files (deploy/host, deploy/kea) it stops there and says what to run;
 3. as the arena's account: pulls its checkout, keeps the running image as
    localhost/freezy-arena:previous, then pulls the new image (freezy_arena_image_source in vars.yaml) or
    builds it, and installs the unit file if it changed;
@@ -29,6 +29,7 @@ import http.client
 import json
 import os
 import pwd
+import re
 import socket
 import struct
 import subprocess
@@ -257,20 +258,30 @@ class Updater:
         return new, changed
 
     def update_host(self, changed):
-        if not changed:
-            return
-        say("This version changes the host files:\n  " + "\n  ".join(changed))
+        """Bring the host side up to this checkout. It does not go by what the pull changed: the
+        checkout may have been pulled by hand before (as it must be the first time this script runs),
+        and the host files would then never be applied."""
+        if changed:
+            say("This version changes the host files:\n  " + "\n  ".join(changed))
         if self.runner.is_arena_user:
-            raise Stop("Those need root. As a user with sudo (ansible), run deploy/freezy-update from that "
-                       "user's checkout instead. The arena was not touched.")
-        if any(path.startswith("deploy/kea/") for path in changed):
-            say("Rebuilding the Kea image.")
-            self.sh("podman", "build", "-q", "-t", KEA_IMAGE, str(self.checkout / "deploy/kea"), who="root")
+            if changed:
+                raise Stop("Those need root. As a user with sudo (ansible), run deploy/freezy-update from "
+                           "that user's checkout instead. The arena was not touched.")
+            return
+        source = self.sh("git", "-C", str(self.checkout), "rev-parse", "HEAD:deploy/kea")
+        built = self.runner.run("podman", "image", "inspect", "--format",
+                                '{{ index .Labels "freezy.source" }}', KEA_IMAGE, who="root", check=False)
+        if built.returncode != 0 or built.stdout.strip() != source:
+            say("Rebuilding the Kea image: it was not built from this checkout's deploy/kea.")
+            self.sh("podman", "build", "-q", "--label", f"freezy.source={source}", "-t", KEA_IMAGE,
+                    str(self.checkout / "deploy/kea"), who="root")
             self.sh("systemctl", "restart", self.settings.get("freezy_kea_service", "freezy-kea.service"),
                     who="root")
-        say("Running host_setup.yaml.")
-        self.sh("ansible-playbook", "-i", "localhost,", "-c", "local",
-                str(self.checkout / "deploy/host/ansible/host_setup.yaml"), who="root")
+        say("Running host_setup.yaml (it changes nothing that is already right).")
+        recap = self.sh("ansible-playbook", "-i", "localhost,", "-c", "local",
+                        str(self.checkout / "deploy/host/ansible/host_setup.yaml"), who="root")
+        counts = re.search(r"changed=(\d+)", recap)
+        say(f"host_setup.yaml: {counts.group(1) if counts else 'unknown'} changed.")
         by_hand = [command for path, command in BY_HAND.items() if path in changed]
         if by_hand:
             say("Not applied, because it can cut off the way in. When you are on site, run as root:\n  " +
