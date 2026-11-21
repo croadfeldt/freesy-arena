@@ -240,6 +240,10 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.ApAddress = r.PostFormValue("apAddress")
 	eventSettings.ApPassword = r.PostFormValue("apPassword")
 	eventSettings.ApChannel, _ = strconv.Atoi(r.PostFormValue("apChannel"))
+	eventSettings.SwitchType = model.SwitchTypeFieldServer
+	if r.PostFormValue("switchType") == model.SwitchTypeCisco {
+		eventSettings.SwitchType = model.SwitchTypeCisco
+	}
 	eventSettings.SwitchAddress = r.PostFormValue("switchAddress")
 	eventSettings.SwitchPassword = r.PostFormValue("switchPassword")
 	eventSettings.SCCManagementEnabled = r.PostFormValue("sccManagementEnabled") == "on"

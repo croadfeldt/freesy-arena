@@ -259,15 +259,26 @@ UI for configuring event settings.
           <div class="tab-pane" id="field" role="tabpanel">
             <fieldset class="mb-4">
               <legend>Networking</legend>
-              <p>Enable this setting if you have a Vivid-Hosting VH-113 access point and Cisco Catalyst 3500-series
-                switch
-                available, for isolating each team to its own SSID and VLAN.</p>
+              <p>Enable this setting to isolate each team on its own SSID and VLAN. It needs a Vivid-Hosting VH-113
+                access point, and either the field server routing the team VLANs (see deploy/host) or a Cisco
+                Catalyst 3500-series switch.</p>
               <div class="row mb-3">
                 <label class="col-lg-8 control-label"
                   for="networkSecurityEnabled">Enable advanced network security</label>
                 <div class="col-lg-1 checkbox">
                   <input type="checkbox" id="networkSecurityEnabled"
                     name="networkSecurityEnabled" {{if .NetworkSecurityEnabled}} checked{{end}}>
+                </div>
+              </div>
+              <div class="row mb-3">
+                <label class="col-lg-6 control-label" for="switchType">Team wired networks</label>
+                <div class="col-lg-6">
+                  <select class="form-select" id="switchType" name="switchType" onchange="updateSwitchFields();">
+                    <option value="fieldServer"{{if eq .TeamSwitchType "fieldServer"}} selected{{end}}>
+                      Field server</option>
+                    <option value="cisco"{{if eq .TeamSwitchType "cisco"}} selected{{end}}>
+                      Cisco Catalyst switch</option>
+                  </select>
                 </div>
               </div>
               <div class="row mb-3">
@@ -295,13 +306,13 @@ UI for configuring event settings.
                   </select>
                 </div>
               </div>
-              <div class="row mb-3">
+              <div class="row mb-3 cisco-switch-setting">
                 <label class="col-lg-6 control-label">Switch Address</label>
                 <div class="col-lg-6">
                   <input type="text" class="form-control" name="switchAddress" value="{{.SwitchAddress}}" placeholder="10.0.100.3">
                 </div>
               </div>
-              <div class="row mb-3">
+              <div class="row mb-3 cisco-switch-setting">
                 <label class="col-lg-6 control-label">Switch Password</label>
                 <div class="col-lg-6">
                   <input type="password" class="form-control" name="switchPassword" value="{{.SwitchPassword}}">
@@ -985,6 +996,11 @@ UI for configuring event settings.
 {{end}}
 {{define "script"}}
 <script>
+  // The switch address and password are only used by the Cisco switch.
+  const updateSwitchFields = function() {
+    $(".cisco-switch-setting").toggle($("#switchType").val() === "cisco");
+  };
+  $(updateSwitchFields);
   updateNumPlayoffAlliances = function (isDoubleElimination) {
     const numPlayoffAlliances = $("input[name=numPlayoffAlliances]");
     numPlayoffAlliances.prop("disabled", false);
