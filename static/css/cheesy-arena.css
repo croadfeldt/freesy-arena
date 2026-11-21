@@ -255,15 +255,25 @@ input[data-changed="true"], select[data-changed="true"] {
   display: none;
 }
 
-/* Placeholder styles for input fields*/
-.col-lg-6 input::placeholder {
-    color: #ff0000; /* Red placeholder text */
+/* Placeholder styles for input fields: a muted hint, so an empty field does not look filled in or wrong. */
+.col-lg-6 input::placeholder,
+.col-lg-2 input::placeholder {
+    color: var(--bs-secondary-color);
     font-style: italic;
-    opacity: 0.4;
+    opacity: 0.6;
 }
 
-.col-lg-2 input::placeholder {
-    color: #ff0000; /* Red placeholder text */
-    font-style: italic;
-    opacity: 0.4;
+/* Settings that do nothing until another setting is on. */
+.settings-needs-note {
+    color: var(--bs-warning-text-emphasis);
+}
+
+/* Keeps the save button in view on long settings tabs. */
+.settings-save-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    padding: 0.75rem 0;
+    background: var(--bs-tertiary-bg);
+    border-top: 1px solid var(--bs-border-color);
 }

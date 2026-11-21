@@ -59,7 +59,7 @@ UI for configuring event settings.
               </div>
               <div>Logo Suffix</div>
               <div class="row mb-3" >
-                <label class="col-lg-6 control-label">Enter suffix used to load alterntive Logo files</label>
+                <label class="col-lg-6 control-label">Enter suffix used to load alternative Logo files</label>
                 <div class="col-lg-6">
                   <input type="text" class="form-control" name="logosuffix" value="{{.LogoSuffix}}" placeholder="{{.LogoSuffix}}">
                 </div>
@@ -313,6 +313,8 @@ UI for configuring event settings.
               <p>Enable this setting if you have an SSH-capable managed switch in your SCCs and want to run commands
                 to disable team ethernet ports while network reconfiguration is in progress. This setting only works
                 if advanced network security is enabled above.</p>
+              <p class="settings-needs-note" id="sccNeedsNetwork">Turn on advanced network security above to use this.</p>
+              <div id="sccSettings">
               <div class="row mb-3">
                 <label class="col-lg-8 control-label"
                   for="sccManagementEnabled">Enable SCC switch management</label>
@@ -356,6 +358,7 @@ UI for configuring event settings.
                 <div class="col-lg-6">
                   <textarea class="form-control" name="sccDownCommands" rows="8">{{.SCCDownCommands}}</textarea>
                 </div>
+              </div>
               </div>
             </fieldset>
             <fieldset class="mb-4">
@@ -482,7 +485,7 @@ UI for configuring event settings.
             </fieldset>
             <fieldset class="mb-4">
               <legend>Driver Station Lite Mode</legend>
-              <p>When enabled, the Driver Station software will prompt teams to allow Cheesy Arena to connect rather
+              <p>When enabled, the Driver Station software will prompt teams to allow the arena to connect rather
                 than automatically connecting, and will preserve the ability to use the spacebar for robot
                 disablement. Consider enabling this setting when physical E-Stop buttons are not present.</p>
               <div class="row mb-3">
@@ -691,6 +694,9 @@ UI for configuring event settings.
               <p><b>Nexus AutoQueue</b>: The queuing status in Nexus can be automatically updated when match scores are
                 committed. To generate an AutoQueue key, the TBA event key must be set and you must log in with a Nexus
                 account that has the lead queuer role.</p>
+              <p class="settings-needs-note" id="nexusNeedsTba">Set the TBA event code on the Publishing tab to use
+                AutoQueue.</p>
+              <div id="nexusAutoQueueSettings">
               <div class="row mb-3">
                 <label class="col-lg-8 control-label" for="nexusAutoQueueEnabled">Enable Nexus AutoQueue</label>
                 <div class="col-lg-1 checkbox">
@@ -706,13 +712,14 @@ UI for configuring event settings.
                   </div>
                 </div>
               </div>
+              </div>
             </fieldset>
             <fieldset class="mb-4">
               <legend>Match Video Recording</legend>
               <p>
                 If you are using a Blackmagic HyperDeck device to record match video, enter the device IP address(es)
                 here
-                to have Cheesy Arena automatically start and stop recording for each match. Separate multiple addresses
+                to have the arena automatically start and stop recording for each match. Separate multiple addresses
                 with
                 a comma.
               </p>
@@ -892,7 +899,7 @@ UI for configuring event settings.
               </div>
             </fieldset>
           </div>
-          <div class="row justify-content-center">
+          <div class="row justify-content-center settings-save-bar">
             <div class="col-lg-3 align-items-center">
               <button type="submit" class="btn btn-primary">Save All Settings</button>
             </div>
@@ -1012,6 +1019,24 @@ UI for configuring event settings.
           history.replaceState(null, "", target);
         }
       });
+    });
+  });
+
+  // Settings that do nothing until another setting is on are greyed out, with a note saying which. They
+  // are enabled again just before saving: a disabled field is not sent, and its value would be lost.
+  const updateDependentSettings = function() {
+    const networkOn = $("#networkSecurityEnabled").is(":checked");
+    $("#sccSettings :input").prop("disabled", !networkOn);
+    $("#sccNeedsNetwork").toggle(!networkOn);
+    const tbaSet = $("input[name=tbaEventCode]").val().trim() !== "";
+    $("#nexusAutoQueueSettings :input").prop("disabled", !tbaSet);
+    $("#nexusNeedsTba").toggle(!tbaSet);
+  };
+  $(function() {
+    updateDependentSettings();
+    $("#networkSecurityEnabled, input[name=tbaEventCode]").on("input change", updateDependentSettings);
+    $("#settingsForm").on("submit", function() {
+      $(this).find(":input").prop("disabled", false);
     });
   });
 
