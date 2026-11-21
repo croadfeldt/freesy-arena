@@ -9,6 +9,8 @@ import (
 	"github.com/Team254/cheesy-arena/websocket"
 	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"net/url"
+	"strconv"
 	"testing"
 )
 
@@ -123,4 +125,30 @@ func TestAudienceDisplayChromaOverride(t *testing.T) {
 	page = web.getHttpResponse(url)
 	assert.Equal(t, 200, page.Code)
 	assert.Contains(t, page.Body.String(), `data-chroma-color="#123456"`)
+}
+
+func TestAudienceDisplayCameraOrientation(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, override := range []string{"", "false", "true"} {
+			name := strconv.FormatBool(enabled) + "/" + override
+			t.Run(name, func(t *testing.T) {
+				web := setupTestWeb(t)
+				web.arena.EventSettings.AudienceCameraBehindHeadTable = enabled
+				path := "/displays/audience"
+				expected := strconv.FormatBool(enabled)
+				if override != "" {
+					path += "?reversed=" + override
+					expected = override
+				}
+				page := web.getHttpResponse(path)
+				assert.Equal(t, 302, page.Code)
+				location, err := url.Parse(page.Header().Get("Location"))
+				assert.NoError(t, err)
+				assert.Equal(t, expected, location.Query().Get("reversed"))
+				page = web.getHttpResponse(location.String())
+				assert.Equal(t, 200, page.Code)
+				assert.NotContains(t, page.Body.String(), "data-camera-behind-head-table")
+			})
+		}
+	}
 }

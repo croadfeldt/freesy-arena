@@ -455,3 +455,23 @@ func TestSetupSettingsAudienceChromaValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestSetupSettingsAudienceCamera(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.False(t, web.arena.EventSettings.AudienceCameraBehindHeadTable)
+	for _, enabled := range []bool{true, false} {
+		form := "audienceCameraOptionsPresent=1"
+		if enabled {
+			form += "&audienceCameraBehindHeadTable=on"
+		}
+		recorder := web.postHttpResponse("/setup/settings", form)
+		assert.Equal(t, 303, recorder.Code)
+		stored, err := web.arena.Database.GetEventSettings()
+		assert.NoError(t, err)
+		assert.Equal(t, enabled, stored.AudienceCameraBehindHeadTable)
+		// An older form omitting the option must preserve the saved value.
+		recorder = web.postHttpResponse("/setup/settings", "name=Test")
+		assert.Equal(t, 303, recorder.Code)
+		assert.Equal(t, enabled, web.arena.EventSettings.AudienceCameraBehindHeadTable)
+	}
+}

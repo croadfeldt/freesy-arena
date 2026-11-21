@@ -10,6 +10,7 @@ import (
 	"github.com/Team254/cheesy-arena/model"
 	"github.com/Team254/cheesy-arena/websocket"
 	"net/http"
+	"strconv"
 )
 
 // Renders the audience display to be chroma keyed over the video feed.
@@ -18,7 +19,7 @@ func (web *Web) audienceDisplayHandler(w http.ResponseWriter, r *http.Request) {
 		w,
 		r,
 		map[string]string{
-			"background": "#0f0", "reversed": "false",
+			"background": "#0f0", "reversed": strconv.FormatBool(web.arena.EventSettings.AudienceCameraBehindHeadTable),
 			"overlayLocation": "bottom",
 		},
 	) {

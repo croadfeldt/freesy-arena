@@ -59,6 +59,7 @@ type EventSettings struct {
 	AudienceScoreBottomOffsetPx      int
 	AudienceChromaColor              string
 	AudienceChromaOverrideEnabled    bool
+	AudienceCameraBehindHeadTable    bool
 	AudienceRankingsFields           string
 	NexusEnabled                     bool
 	NexusAutoQueueEnabled            bool

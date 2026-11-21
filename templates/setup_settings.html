@@ -557,6 +557,14 @@ UI for configuring event settings.
               </div>
               <p class="form-text">Raise the Match Introduction and Match Play score overlay by this many pixels.
                 Applies to bottom placement only. Default: 0. Reload the audience display after saving.</p>
+              <input type="hidden" name="audienceCameraOptionsPresent" value="1">
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="audienceCameraBehindHeadTable"
+                  name="audienceCameraBehindHeadTable" {{if .AudienceCameraBehindHeadTable}}checked{{end}}>
+                <label class="form-check-label" for="audienceCameraBehindHeadTable">Main camera is behind the head table and red is on the right</label>
+              </div>
+              <p class="form-text">Sets the default alliance sides for audience display URLs without a reversed value.
+                An explicit reversed=true or reversed=false in the URL takes priority. Double-click the display to flip sides.</p>
               <input type="hidden" name="audienceChromaOptionsPresent" value="1">
               <div class="form-check mb-3">
                 <input class="form-check-input" type="checkbox" id="audienceChromaOverrideEnabled"

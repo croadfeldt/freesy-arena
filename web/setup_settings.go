@@ -61,6 +61,11 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 		audienceScoreBottomOffsetPx = value
 	}
 
+	audienceCameraBehindHeadTable := eventSettings.AudienceCameraBehindHeadTable
+	if r.PostFormValue("audienceCameraOptionsPresent") == "1" {
+		audienceCameraBehindHeadTable = r.PostFormValue("audienceCameraBehindHeadTable") == "on"
+	}
+
 	audienceChromaColor := eventSettings.AudienceChromaColor
 	audienceChromaOverrideEnabled := eventSettings.AudienceChromaOverrideEnabled
 	if r.PostFormValue("audienceChromaOptionsPresent") == "1" {
@@ -219,6 +224,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.TbaSecretId = r.PostFormValue("tbaSecretId")
 	eventSettings.TbaSecret = r.PostFormValue("tbaSecret")
 	eventSettings.AudienceScoreBottomOffsetPx = audienceScoreBottomOffsetPx
+	eventSettings.AudienceCameraBehindHeadTable = audienceCameraBehindHeadTable
 	eventSettings.AudienceChromaColor = audienceChromaColor
 	eventSettings.AudienceChromaOverrideEnabled = audienceChromaOverrideEnabled
 	eventSettings.AutoAudienceDisplayEnabled = r.PostFormValue("autoAudienceDisplayEnabled") == "on"
