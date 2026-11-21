@@ -314,56 +314,20 @@ const handleArenaStatus = function (data) {
     $("#plc" + name + "Status").attr("data-ready", status);
   });
 
-  if (data.ScoreTableIOEnabled) {
-    if (data.ScoreTableIOIsHealthy) {
-      $("#scoreTableIO").text("Score Connected");
-      $("#scoreTableIO").attr("data-ready", 2);
-    } else {
-      $("#scoreTableIO").text("Score Not Connected");
-      $("#scoreTableIO").attr("data-ready", 1);
-    }
-  } else {
-    $("#scoreTableIO").text("Score Disabled");
-    $("#scoreTableIO").attr("data-ready", 0);
-  }
-  if (data.RedEstopsEnabled) {  
-    if (data.RedEstopsIsHealthy) {
-      $("#redEstopsIO").text("Red Estops Connected");
-      $("#redEstopsIO").attr("data-ready", 2);
-    } else {
-      $("#redEstopsIO").text("Red Estops Not Connected");
-      $("#redEstopsIO").attr("data-ready", 1);
-    }
-  } else {
-    $("#redEstopsIO").text("Red Estops Disabled");
-    $("#redEstopsIO").attr("data-ready", 0);
-  }
-  if (data.BlueEstopsEnabled) {
-    if (data.BlueEStopsIsHealthy) {
-      $("#blueEstopsIO").text("Blue Estops Connected");
-      $("#blueEstopsIO").attr("data-ready", 2);
-    } else {
-      $("#blueEstopsIO").text("Blue Estops Not Connected");
-      $("#blueEstopsIO").attr("data-ready", 1);
-    }
-  } else {
-    $("#blueEstopsIO").text("Blue Estops Disabled");
-    $("#blueEstopsIO").attr("data-ready", 0);
-  }
+  updateBoardBadge("#scoreTableIO", "Score Table", data.ScoreTableIOEnabled, data.ScoreTableIOIsHealthy);
+  updateBoardBadge("#redEstopsIO", "Red Stops", data.RedEstopsEnabled, data.RedEstopsIsHealthy);
+  updateBoardBadge("#blueEstopsIO", "Blue Stops", data.BlueEstopsEnabled, data.BlueEStopsIsHealthy);
   updateBoardBadge("#redHubIO", "Red Hub", data.RedHubEnabled, data.RedHubIsHealthy);
   updateBoardBadge("#blueHubIO", "Blue Hub", data.BlueHubEnabled, data.BlueHubIsHealthy);
   $("#ftaReady").attr("data-ready", data.IsFtaReady);
 };
 
-// Shows whether an ESP32 board is off, reporting, or quiet, in the same style as the stop board badges.
+// Shows an ESP32 board like the other status pills: its name, coloured grey when turned off, red when not connected
+// and green when reporting. The state is also in the tooltip.
 const updateBoardBadge = function (selector, name, enabled, healthy) {
-  if (!enabled) {
-    $(selector).text(name + " Disabled").attr("data-ready", 0);
-  } else if (healthy) {
-    $(selector).text(name + " Connected").attr("data-ready", 2);
-  } else {
-    $(selector).text(name + " Not Connected").attr("data-ready", 1);
-  }
+  const state = !enabled ? 0 : healthy ? 2 : 1;
+  $(selector).text(name).attr("data-ready", state)
+    .attr("title", name + ": " + ["turned off", "not connected", "connected"][state]);
 };
 
 // Handles a websocket message to update the teams for the current match.
