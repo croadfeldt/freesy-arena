@@ -4,6 +4,26 @@ The arena runs as a rootless container, so it cannot change the field server's V
 server. This directory holds the root-owned pieces that do it on the arena's behalf, the filter that
 limits what a team VLAN can reach, and the playbook that installs them.
 
+## Updating the field server
+
+Between matches, as `ansible` on the field server:
+
+    ~/freesy-arena-2026/deploy/freezy-update
+
+It refuses while a match is running or its results are not committed yet. It pulls the checkout and, if
+the host files changed, runs `host_setup.yaml` (and rebuilds Kea if `deploy/kea` changed). Then, as the
+arena's account, it pulls that account's checkout, puts the arena on the new image and restarts it, and
+loads the match that was loaded before. The image is pulled from `freezy_arena_image_source` in
+`ansible/vars.yaml` (set it in `/etc/freezy-net/vars.yaml`), or built on the field server if that is
+empty. The image that ran before is kept as `localhost/freezy-arena:previous`. If the new arena does not
+answer within 90 seconds the script goes back to it by itself, and `deploy/freezy-update --rollback`
+goes back to it at any time. It leaves `host_network.yaml` and `jump_vms.yaml` to a person, because they
+can cut off the way in, and says when one of them changed. What it did is in `journalctl -t
+freezy-update`. `python3 -m unittest deploy/test_freezy_update.py` tests it against a fake field server.
+
+`.github/workflows/images.yml` builds the arena and Kea images for every pull request, and pushes them to
+quay.io on every merge, tagged `latest` and with the commit.
+
 ## Setting up the field server
 
 Run these as root on the field server, from a checkout of this repository, and again whenever the files

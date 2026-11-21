@@ -1,0 +1,389 @@
+#!/usr/bin/python3
+"""Update the field server to the newest version of this branch, or roll the arena back.
+
+    deploy/freezy-update              update everything this version changes, then restart the arena
+    deploy/freezy-update --build      build the arena image here instead of pulling it
+    deploy/freezy-update --image REF  pull this arena image instead of the configured one
+    deploy/freezy-update --rollback   put the arena back on the image it ran before the last update
+
+Run it from a checkout of this repository, as a user with sudo (ansible) to update everything, or as the
+arena's account (cheesy) to update the arena only. In order, it:
+
+1. refuses while a match is running or its results are not committed yet (--force overrides);
+2. pulls this checkout. If the host files changed (deploy/host, deploy/kea), it rebuilds the Kea image
+   if that changed and runs host_setup.yaml. Run as the arena's account it cannot, so it stops there
+   and says what to run;
+3. as the arena's account: pulls its checkout, keeps the running image as
+   localhost/freezy-arena:previous, then pulls the new image (freezy_arena_image_source in vars.yaml) or
+   builds it, and installs the unit file if it changed;
+4. restarts the arena and loads the match that was loaded before. If the new arena does not answer
+   within 90 seconds, it goes back to the previous image by itself.
+
+Everything it says also goes to the journal: `journalctl -t freezy-update`. Set FREEZY_ADMIN_PASSWORD if
+the arena has an admin password.
+"""
+import argparse
+import base64
+import getpass
+import http.client
+import json
+import os
+import pwd
+import socket
+import struct
+import subprocess
+import sys
+import time
+import urllib.parse
+from pathlib import Path
+
+IMAGE = "localhost/freezy-arena:latest"
+PREVIOUS = "localhost/freezy-arena:previous"
+KEA_IMAGE = "localhost/freezy-kea:latest"
+UNIT = "freezy-arena.service"
+PRE_MATCH = 0
+START_TIMEOUT_SEC = 90
+HOST_PATHS = ("deploy/host", "deploy/kea")
+# Host files that host_setup.yaml does not apply: they change interfaces or the jump machine, which can
+# cut off the way in, so they are left to a person.
+BY_HAND = {
+    "deploy/host/ansible/host_network.yaml": "ansible-playbook -i localhost, -c local deploy/host/ansible/host_network.yaml",
+    "deploy/host/ansible/jump_vms.yaml": "ansible-playbook -i localhost, -c local deploy/host/ansible/jump_vms.yaml",
+}
+
+
+class Stop(Exception):
+    """A reason to stop. The message is for the operator; nothing after the stop has been changed."""
+
+
+def say(message):
+    print(message, flush=True)
+    subprocess.run(["logger", "-t", "freezy-update", "--", message], check=False,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def load_settings(checkout):
+    """vars.yaml, with /etc/freezy-net/vars.yaml on top, as host_setup.yaml reads them."""
+    import yaml
+    settings = {}
+    for path in (checkout / "deploy/host/ansible/vars.yaml", Path("/etc/freezy-net/vars.yaml")):
+        try:
+            with open(path) as f:
+                settings.update(yaml.safe_load(f) or {})
+        except (FileNotFoundError, PermissionError):
+            pass
+    return settings
+
+
+class Runner:
+    """Runs commands as this user, as root, or as the arena's account."""
+
+    def __init__(self, arena_user):
+        self.arena_user = arena_user
+        self.is_arena_user = getpass.getuser() == arena_user
+        account = pwd.getpwnam(arena_user)
+        self.arena_home = account.pw_dir
+        uid = account.pw_uid
+        self.arena_prefix = [] if self.is_arena_user else [
+            "sudo", "-n", "runuser", "-u", arena_user, "--", "env", f"HOME={account.pw_dir}",
+            f"XDG_RUNTIME_DIR=/run/user/{uid}", f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus"]
+
+    def run(self, *args, who="me", cwd=None, check=True):
+        prefix = {"me": [], "root": ["sudo", "-n"], "arena": self.arena_prefix}[who]
+        # The arena's account may not be able to read this user's working directory.
+        result = subprocess.run(prefix + list(args), cwd=cwd or "/", text=True, capture_output=True)
+        if check and result.returncode != 0:
+            raise Stop(f"`{' '.join(args)}` failed:\n{(result.stderr or result.stdout).strip()[-2000:]}")
+        return result
+
+
+class Arena:
+    """Just enough of the arena's match play websocket to read the loaded match and load one."""
+
+    def __init__(self, host, port=8080, password=None):
+        self.host, self.port, self.password = host, port, password
+        self.cookie = None
+
+    def answers(self):
+        try:
+            connection = http.client.HTTPConnection(self.host, self.port, timeout=3)
+            connection.request("GET", "/")
+            return connection.getresponse().status == 200
+        except OSError:
+            return False
+
+    def login(self):
+        if not self.password:
+            raise Stop("The arena has an admin password. Set FREEZY_ADMIN_PASSWORD and run this again.")
+        body = urllib.parse.urlencode({"username": "admin", "password": self.password})
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        connection.request("POST", "/login", body, {"Content-Type": "application/x-www-form-urlencoded"})
+        for header, value in connection.getresponse().getheaders():
+            if header.lower() == "set-cookie" and value.startswith("session_token="):
+                self.cookie = value.split(";", 1)[0]
+                return
+        raise Stop("The arena did not accept FREEZY_ADMIN_PASSWORD.")
+
+    def _connect(self):
+        sock = socket.create_connection((self.host, self.port), timeout=10)
+        key = base64.b64encode(os.urandom(16)).decode()
+        cookie = f"Cookie: {self.cookie}\r\n" if self.cookie else ""
+        sock.sendall((f"GET /match_play/websocket HTTP/1.1\r\nHost: {self.host}:{self.port}\r\n"
+                      f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                      f"Sec-WebSocket-Version: 13\r\n{cookie}\r\n").encode())
+        buffer = b""
+        while b"\r\n\r\n" not in buffer:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise OSError("the arena closed the connection")
+            buffer += chunk
+        head, rest = buffer.split(b"\r\n\r\n", 1)
+        status = head.split(b"\r\n", 1)[0]
+        if b" 307 " in status and not self.cookie:
+            sock.close()
+            self.login()
+            return self._connect()
+        if b" 101 " not in status:
+            raise OSError(f"the arena refused the websocket: {status.decode(errors='replace')}")
+        return sock, rest
+
+    @staticmethod
+    def _send(sock, message):
+        data = json.dumps(message).encode()
+        mask = os.urandom(4)
+        length = len(data)
+        header = bytes([0x81]) + (bytes([0x80 | length]) if length < 126
+                                  else bytes([0x80 | 126]) + struct.pack(">H", length))
+        sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    @staticmethod
+    def _messages(sock, buffer, seconds):
+        end = time.time() + seconds
+        sock.settimeout(0.5)
+        while time.time() < end:
+            while len(buffer) >= 2:
+                length, offset = buffer[1] & 0x7f, 2
+                if length == 126:
+                    if len(buffer) < 4:
+                        break
+                    length, offset = struct.unpack(">H", buffer[2:4])[0], 4
+                elif length == 127:
+                    if len(buffer) < 10:
+                        break
+                    length, offset = struct.unpack(">Q", buffer[2:10])[0], 10
+                if len(buffer) < offset + length:
+                    break
+                opcode, payload = buffer[0] & 0x0f, buffer[offset:offset + length]
+                buffer = buffer[offset + length:]
+                if opcode == 1:
+                    try:
+                        yield json.loads(payload)
+                    except ValueError:
+                        pass
+            try:
+                chunk = sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not chunk:
+                return
+            buffer += chunk
+
+    def status(self, seconds=6):
+        """The loaded match and the match state: {"match_id", "name", "state"}."""
+        sock, buffer = self._connect()
+        found = {}
+        try:
+            for message in self._messages(sock, buffer, seconds):
+                data = message.get("data") or {}
+                if message.get("type") == "matchLoad":
+                    match = data.get("Match") or {}
+                    found.update(match_id=match.get("Id", 0),
+                                 name=match.get("LongName") or match.get("ShortName") or "the test match")
+                elif message.get("type") == "matchTime":
+                    found["state"] = data.get("MatchState")
+                if "match_id" in found and "state" in found:
+                    return found
+        finally:
+            sock.close()
+        raise OSError("the arena did not report its loaded match")
+
+    def load(self, match_id, seconds=10):
+        sock, buffer = self._connect()
+        try:
+            for _ in self._messages(sock, buffer, 1):
+                pass
+            self._send(sock, {"type": "loadMatch", "data": {"matchId": match_id}})
+            for message in self._messages(sock, b"", seconds):
+                data = message.get("data") or {}
+                if message.get("type") == "error":
+                    raise Stop(f"The arena would not load match {match_id}: {data}")
+                if message.get("type") == "matchLoad" and (data.get("Match") or {}).get("Id") == match_id:
+                    return
+        finally:
+            sock.close()
+        raise Stop(f"The arena did not confirm loading match {match_id}; load it on the Match Play page.")
+
+
+class Updater:
+    def __init__(self, checkout, arena_checkout, settings, runner, arena, wait=time.sleep):
+        self.checkout, self.arena_checkout, self.settings = checkout, arena_checkout, settings
+        self.runner, self.arena, self.wait = runner, arena, wait
+
+    def sh(self, *args, **kwargs):
+        return self.runner.run(*args, **kwargs).stdout.strip()
+
+    # ---- Steps. ----
+
+    def loaded_match(self, force):
+        """The match to load again after the restart, or None. Stops if a match is under way."""
+        try:
+            status = self.arena.status()
+        except OSError as error:
+            say(f"The arena is not answering ({error}); updating anyway.")
+            return None
+        say(f"Loaded: {status['name']} (match state {status['state']}).")
+        if status["state"] != PRE_MATCH and not force:
+            raise Stop("A match is running or its results are not committed yet. Finish it first, or use "
+                       "--force to restart the arena anyway. Nothing was changed.")
+        return status["match_id"] or None
+
+    def pull(self, checkout, who):
+        old = self.sh("git", "-C", str(checkout), "rev-parse", "HEAD", who=who)
+        self.sh("git", "-C", str(checkout), "pull", "-q", "--ff-only", who=who)
+        new = self.sh("git", "-C", str(checkout), "rev-parse", "HEAD", who=who)
+        say(f"{checkout}: {new[:12]}" + (" (no change)" if old == new else f" (was {old[:12]})"))
+        changed = [] if old == new else self.sh(
+            "git", "-C", str(checkout), "diff", "--name-only", old, new, "--", *HOST_PATHS, who=who).split()
+        return new, changed
+
+    def update_host(self, changed):
+        if not changed:
+            return
+        say("This version changes the host files:\n  " + "\n  ".join(changed))
+        if self.runner.is_arena_user:
+            raise Stop("Those need root. As a user with sudo (ansible), run deploy/freezy-update from that "
+                       "user's checkout instead. The arena was not touched.")
+        if any(path.startswith("deploy/kea/") for path in changed):
+            say("Rebuilding the Kea image.")
+            self.sh("podman", "build", "-q", "-t", KEA_IMAGE, str(self.checkout / "deploy/kea"), who="root")
+            self.sh("systemctl", "restart", self.settings.get("freezy_kea_service", "freezy-kea.service"),
+                    who="root")
+        say("Running host_setup.yaml.")
+        self.sh("ansible-playbook", "-i", "localhost,", "-c", "local",
+                str(self.checkout / "deploy/host/ansible/host_setup.yaml"), who="root")
+        by_hand = [command for path, command in BY_HAND.items() if path in changed]
+        if by_hand:
+            say("Not applied, because it can cut off the way in. When you are on site, run as root:\n  " +
+                "\n  ".join(by_hand))
+
+    def update_arena_image(self, image_ref, build, head):
+        if self.runner.run("podman", "image", "exists", IMAGE, who="arena", check=False).returncode == 0:
+            self.sh("podman", "tag", IMAGE, PREVIOUS, who="arena")
+        if build or not image_ref:
+            say("Building the arena image from " + str(self.arena_checkout) + ".")
+            self.sh("podman", "build", "-q", "-t", IMAGE, str(self.arena_checkout), who="arena")
+            return
+        say(f"Pulling {image_ref}.")
+        self.sh("podman", "pull", "-q", image_ref, who="arena")
+        self.sh("podman", "tag", image_ref, IMAGE, who="arena")
+        revision = self.sh("podman", "image", "inspect", "--format",
+                           '{{ index .Labels "org.opencontainers.image.revision" }}', IMAGE, who="arena")
+        if revision and revision != head:
+            say(f"Note: the image is from {revision[:12]}, not the checkout's {head[:12]}. Its build may "
+                "still be running; run this again once it has finished.")
+
+    def install_unit(self):
+        source = str(self.arena_checkout / "deploy/freezy-arena.container")
+        target = f"{self.runner.arena_home}/.config/containers/systemd/freezy-arena.container"
+        if self.runner.run("cmp", "-s", source, target, who="arena", check=False).returncode != 0:
+            self.sh("install", "-D", "-m", "0644", source, target, who="arena")
+            self.sh("systemctl", "--user", "daemon-reload", who="arena")
+            say("Installed the new arena unit file.")
+
+    def restart_and_wait(self):
+        self.sh("systemctl", "--user", "restart", UNIT, who="arena")
+        for _ in range(START_TIMEOUT_SEC):
+            self.wait(1)
+            if self.arena.answers():
+                return True
+        return False
+
+    def reload(self, match_id):
+        if match_id is None:
+            say("No scheduled match was loaded before, so none is loaded now.")
+            return
+        self.arena.load(match_id)
+        say(f"Loaded match {match_id} again.")
+
+    def restart_or_roll_back(self, match_id):
+        say("Restarting the arena.")
+        if self.restart_and_wait():
+            say("The arena is up.")
+            self.reload(match_id)
+            return
+        if self.runner.run("podman", "image", "exists", PREVIOUS, who="arena", check=False).returncode != 0:
+            raise Stop(f"The arena did not answer within {START_TIMEOUT_SEC} seconds, and there is no "
+                       "previous image to go back to. Check `journalctl --user -u freezy-arena`.")
+        say(f"The arena did not answer within {START_TIMEOUT_SEC} seconds; going back to the previous image.")
+        self.sh("podman", "tag", PREVIOUS, IMAGE, who="arena")
+        if not self.restart_and_wait():
+            raise Stop("The previous image did not answer either. Check `journalctl --user -u freezy-arena`.")
+        self.reload(match_id)
+        raise Stop("Rolled back: the arena is running the image it ran before this update.")
+
+    # ---- Commands. ----
+
+    def update(self, image_ref, build, force):
+        match_id = self.loaded_match(force)
+        head, changed = self.pull(self.checkout, "me")
+        self.update_host(changed)
+        if self.arena_checkout != self.checkout:
+            head, _ = self.pull(self.arena_checkout, "arena")
+        self.update_arena_image(image_ref, build, head)
+        self.install_unit()
+        self.restart_or_roll_back(match_id)
+        say("Update finished.")
+
+    def rollback(self, force):
+        if self.runner.run("podman", "image", "exists", PREVIOUS, who="arena", check=False).returncode != 0:
+            raise Stop("There is no previous image to go back to.")
+        match_id = self.loaded_match(force)
+        self.sh("podman", "tag", PREVIOUS, IMAGE, who="arena")
+        say("Restarting the arena on the previous image.")
+        if not self.restart_and_wait():
+            raise Stop(f"The arena did not answer within {START_TIMEOUT_SEC} seconds. Check "
+                       "`journalctl --user -u freezy-arena`.")
+        self.reload(match_id)
+        say("Rollback finished.")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Update the field server, or roll the arena back.")
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--image", help="pull this arena image instead of freezy_arena_image_source")
+    choice.add_argument("--build", action="store_true", help="build the arena image instead of pulling it")
+    choice.add_argument("--rollback", action="store_true", help="put the arena back on the previous image")
+    parser.add_argument("--force", action="store_true", help="restart the arena even during a match")
+    args = parser.parse_args(argv)
+
+    checkout = Path(__file__).resolve().parent.parent
+    settings = load_settings(checkout)
+    runner = Runner(settings.get("freezy_arena_user", "cheesy"))
+    arena_checkout = checkout if runner.is_arena_user else Path(
+        settings.get("freezy_arena_checkout") or f"{runner.arena_home}/freesy-arena-2026")
+    arena = Arena(settings.get("freezy_fms_address", "10.0.100.5"),
+                  password=os.environ.get("FREEZY_ADMIN_PASSWORD"))
+    updater = Updater(checkout, arena_checkout, settings, runner, arena)
+    try:
+        if args.rollback:
+            updater.rollback(args.force)
+        else:
+            updater.update(args.image or settings.get("freezy_arena_image_source"), args.build, args.force)
+    except Stop as stop:
+        say(str(stop))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
