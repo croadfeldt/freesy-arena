@@ -9,6 +9,9 @@ import (
 	//"github.com/Team254/cheesy-arena/game"
 	//"github.com/Team254/cheesy-arena/model"
 	"encoding/json"
+	"errors"
+	"net"
+	"time"
 	"log"
 	"net/http"
 	"strconv"
@@ -279,6 +282,9 @@ func (web *Web) xplcWebsocketHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Main WebSocket handler
+// How long a board on the PLC websocket may send nothing before the arena closes its connection.
+var plcBoardReadTimeout = 5 * time.Second
+
 func (web *Web) plcWebsocketHandler(w http.ResponseWriter, r *http.Request) {
 	ws, err := websocket.NewWebsocket(w, r)
 	if err != nil {
@@ -294,16 +300,31 @@ func (web *Web) plcWebsocketHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle incoming messages (set registers)
+	// Handle incoming messages (set registers). A board that reports does so at least every 500 ms, so once a
+	// connection has sent something, going quiet for plcBoardReadTimeout means the board has stopped or lost its link:
+	// close it rather than hold it open forever. A board that only listens (a hub with its inputs and registers turned
+	// off) never sends, so the limit starts with the first message and such a board is never closed.
+	hasReported := false
 	for {
-		messageType, data, err := ws.Read()
+		var messageType string
+		var data any
+		var err error
+		if hasReported {
+			messageType, data, err = ws.ReadWithDeadline(plcBoardReadTimeout)
+		} else {
+			messageType, data, err = ws.Read()
+		}
 		if err != nil {
-			if err != io.EOF {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				log.Printf("PLC websocket from %s sent nothing for %v; closing it.", r.RemoteAddr, plcBoardReadTimeout)
+			} else if err != io.EOF {
 				log.Printf("PLC WS read error: %v", err)
 			}
 			return
 		}
 
+		hasReported = true
 		web.handlePLCWebSocketMessage(ws, messageType, data)
 	}
 }

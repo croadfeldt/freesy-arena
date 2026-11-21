@@ -64,9 +64,18 @@ func (ws *Websocket) Read() (string, any, error) {
 		// Include the caller of this method in the error message.
 		_, file, line, _ := runtime.Caller(1)
 		filePathParts := strings.Split(file, "/")
-		return "", nil, fmt.Errorf("[%s:%d] Websocket read error: %v", filePathParts[len(filePathParts)-1], line, err)
+		return "", nil, fmt.Errorf("[%s:%d] Websocket read error: %w", filePathParts[len(filePathParts)-1], line, err)
 	}
 	return message.Type, message.Data, nil
+}
+
+// Reads the next message, giving up after the timeout. Unlike ReadWithTimeout, the deadline is on the connection
+// itself, so no read is left waiting behind; after a timeout the connection is unusable and should be closed.
+func (ws *Websocket) ReadWithDeadline(timeout time.Duration) (string, any, error) {
+	if err := ws.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return "", nil, err
+	}
+	return ws.Read()
 }
 
 func (ws *Websocket) ReadWithTimeout(timeout time.Duration) (string, any, error) {
