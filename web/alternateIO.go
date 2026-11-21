@@ -295,11 +295,20 @@ func (web *Web) plcWebsocketHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle incoming messages (set registers). Every board reports at least every 500 ms, so a connection that sends
-	// nothing for plcBoardReadTimeout belongs to a board that has stopped or lost its link: close it rather than hold
-	// it open forever.
+	// Handle incoming messages (set registers). A board that reports does so at least every 500 ms, so once a
+	// connection has sent something, going quiet for plcBoardReadTimeout means the board has stopped or lost its link:
+	// close it rather than hold it open forever. A board that only listens (a hub with its inputs and registers turned
+	// off) never sends, so the limit starts with the first message and such a board is never closed.
+	hasReported := false
 	for {
-		messageType, data, err := ws.ReadWithDeadline(plcBoardReadTimeout)
+		var messageType string
+		var data any
+		var err error
+		if hasReported {
+			messageType, data, err = ws.ReadWithDeadline(plcBoardReadTimeout)
+		} else {
+			messageType, data, err = ws.Read()
+		}
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
@@ -310,6 +319,7 @@ func (web *Web) plcWebsocketHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		hasReported = true
 		web.handlePLCWebSocketMessage(ws, messageType, data)
 	}
 }

@@ -20,6 +20,9 @@ func TestPlcWebsocketClosesQuietBoards(t *testing.T) {
 	defer conn.Close()
 	ws := websocket.NewTestWebsocket(conn)
 
+	// A board that only listens is never closed, however long it stays quiet.
+	time.Sleep(3 * plcBoardReadTimeout)
+
 	// A board that keeps reporting stays connected well past the timeout.
 	for i := 0; i < 5; i++ {
 		assert.Nil(t, ws.Write("setInput", []map[string]any{{"channel": 20, "state": true}}))
