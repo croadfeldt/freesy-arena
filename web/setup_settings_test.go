@@ -346,7 +346,7 @@ func TestSetupSettingsAudienceOptions(t *testing.T) {
 		"activeSettingsTab=automation&autoAudienceDisplayEnabled=on&"+
 			"autoAudienceScoreSec=25&autoAudiencePlayoffDelaySec=8&"+
 			"autoAudienceBracketSec=35&autoAudienceLastMatchSec=60&"+
-			"audienceRankingsOptionsPresent=1&"+
+			"audienceScoreBottomOffsetPx=75&audienceRankingsOptionsPresent=1&"+
 			"audienceRankingsOption=rp&audienceRankingsOption=nextMatch"+
 			"&autoDurationSec=20&pauseDurationSec=3&transitionShiftDurationSec=10&shiftDurationSec=25&endgameDurationSec=30&energizedBonusThreshold=100&superchargedBonusThreshold=360&traversalBonusThreshold=50")
 	assert.Equal(t, 303, recorder.Code)
@@ -361,6 +361,7 @@ func TestSetupSettingsAudienceOptions(t *testing.T) {
 
 	stored, err := web.arena.Database.GetEventSettings()
 	assert.NoError(t, err)
+	assert.Equal(t, 75, stored.AudienceScoreBottomOffsetPx)
 	assert.Equal(t, 25, stored.AutoAudienceScoreSec)
 	assert.Equal(t, 35, stored.AutoAudienceBracketSec)
 	assert.Equal(t, "rp,nextMatch", stored.AudienceRankingsFields)
@@ -383,4 +384,32 @@ func TestSetupSettingsAudienceTimerValidation(t *testing.T) {
 		assert.Equal(t, 20, web.arena.EventSettings.AudienceScoreSeconds())
 		assert.Equal(t, "", web.arena.EventSettings.AudienceRankingsFields)
 	}
+}
+
+func TestSetupSettingsAudienceOffsetValidation(t *testing.T) {
+	for _, bad := range []string{"-1", "bad", "1.5", ""} {
+		t.Run(bad, func(t *testing.T) {
+			web := setupTestWeb(t)
+			web.arena.EventSettings.AudienceScoreBottomOffsetPx = 75
+			recorder := web.postHttpResponse("/setup/settings", "name=Changed&audienceScoreBottomOffsetPx="+bad)
+			assert.Equal(t, 200, recorder.Code)
+			assert.Contains(t, recorder.Body.String(), "nonnegative whole number")
+			assert.Equal(t, 75, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+			assert.Equal(t, "Untitled Event", web.arena.EventSettings.Name)
+		})
+	}
+}
+
+func TestSetupSettingsAudienceOffsetDefaultAndOmission(t *testing.T) {
+	web := setupTestWeb(t)
+	assert.Zero(t, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+	web.arena.EventSettings.AudienceScoreBottomOffsetPx = 75
+	recorder := web.postHttpResponse("/setup/settings", "name=Test")
+	assert.Equal(t, 303, recorder.Code)
+	assert.Equal(t, 75, web.arena.EventSettings.AudienceScoreBottomOffsetPx)
+	recorder = web.postHttpResponse("/setup/settings", "audienceScoreBottomOffsetPx=0")
+	assert.Equal(t, 303, recorder.Code)
+	stored, err := web.arena.Database.GetEventSettings()
+	assert.NoError(t, err)
+	assert.Zero(t, stored.AudienceScoreBottomOffsetPx)
 }

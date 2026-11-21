@@ -547,6 +547,18 @@ UI for configuring event settings.
           </div>
           <div class="tab-pane" id="automation" role="tabpanel">
             <fieldset class="mb-4">
+              <legend>Audience Score Position</legend>
+              <div class="row mb-3 align-items-center">
+                <label class="col-lg-8 col-form-label" for="audienceScoreBottomOffsetPx">Audience score offset from bottom (px)</label>
+                <div class="col-lg-4">
+                  <input class="form-control" type="number" id="audienceScoreBottomOffsetPx"
+                    name="audienceScoreBottomOffsetPx" min="0" step="1" required value="{{.AudienceScoreBottomOffsetPx}}">
+                </div>
+              </div>
+              <p class="form-text">Raise the Match Introduction and Match Play score overlay by this many pixels.
+                Applies to bottom placement only. Default: 0. Reload the audience display after saving.</p>
+            </fieldset>
+            <fieldset class="mb-4">
               <legend>Audience Display Automation</legend>
               <p class="text-body-secondary">Automatically advance the Audience and Wall displays after a score is posted.
                 All durations are in seconds. Changes take effect on the next score posting.</p>

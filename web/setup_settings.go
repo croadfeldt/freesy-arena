@@ -47,6 +47,20 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Validate display preferences before mutating event-wide settings. Posts
 	// from older clients without these fields retain the existing preferences.
+	audienceScoreBottomOffsetPx := eventSettings.AudienceScoreBottomOffsetPx
+	rawOffset := r.PostFormValue("audienceScoreBottomOffsetPx")
+	if _, submitted := r.PostForm["audienceScoreBottomOffsetPx"]; submitted {
+		value, err := strconv.Atoi(rawOffset)
+		if err != nil || value < 0 {
+			web.renderSettingsWithStatus(
+				w, r, "Audience score offset must be a nonnegative whole number of pixels.",
+				"automation", http.StatusOK,
+			)
+			return
+		}
+		audienceScoreBottomOffsetPx = value
+	}
+
 	settingsDurations := []struct {
 		key      string
 		previous int
@@ -180,6 +194,7 @@ func (web *Web) settingsPostHandler(w http.ResponseWriter, r *http.Request) {
 	eventSettings.TbaEventCode = r.PostFormValue("tbaEventCode")
 	eventSettings.TbaSecretId = r.PostFormValue("tbaSecretId")
 	eventSettings.TbaSecret = r.PostFormValue("tbaSecret")
+	eventSettings.AudienceScoreBottomOffsetPx = audienceScoreBottomOffsetPx
 	eventSettings.AutoAudienceDisplayEnabled = r.PostFormValue("autoAudienceDisplayEnabled") == "on"
 	eventSettings.AutoAudienceScoreSec = *settingsDurations[0].value
 	eventSettings.AutoAudiencePlayoffDelaySec = *settingsDurations[1].value

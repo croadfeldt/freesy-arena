@@ -22,11 +22,13 @@ func TestAudienceDisplay(t *testing.T) {
 	assert.Contains(t, recorder.Header().Get("Location"), "reversed=false")
 	assert.Contains(t, recorder.Header().Get("Location"), "overlayLocation=bottom")
 
+	web.arena.EventSettings.AudienceScoreBottomOffsetPx = 75
 	recorder = web.getHttpResponse(
 		"/displays/audience?displayId=1&background=%23000&reversed=false&overlayLocation=top",
 	)
 	assert.Equal(t, 200, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), "Audience Display - Untitled Event - Cheesy Arena")
+	assert.Contains(t, recorder.Body.String(), `data-bottom-offset-px="75"`)
 	assert.Contains(t, recorder.Body.String(), "finalTiebreakReason")
 	assert.Contains(t, recorder.Body.String(), "audienceInformation")
 	assert.Contains(t, recorder.Body.String(), "audience_information.js")
