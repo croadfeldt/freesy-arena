@@ -159,6 +159,16 @@
 .badge-scoring[data-present=false] {
   background-color: #666;
 }
+/* ESP32 boards on match play: data-ready is 0 when the board is turned off, 1 when it is not connected, 2 when it is. */
+.badge-alternatIO {
+  background-color: #666;
+}
+.badge-alternatIO[data-ready="1"] {
+  background-color: #e66;
+}
+.badge-alternatIO[data-ready="2"] {
+  background-color: #0c6;
+}
 .badge-status {
   background-color: #e66;
 }
