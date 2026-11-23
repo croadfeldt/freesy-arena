@@ -46,6 +46,18 @@ class ImageInstallTest(unittest.TestCase):
                 installed = re.search(rf'"\$host/{re.escape(name)}" /usr/share/{re.escape(name)}\b', install)
                 self.assertTrue(installed, f"{playbook} runs {name}; install.sh does not put it in /usr/share")
 
+    def test_a_container_that_takes_the_hosts_time_zone_has_one_to_take(self):
+        # Timezone=local makes podman read /etc/localtime, which a fresh `bootc install` does not have.
+        # The arena then failed to start, over and over. The image's tmpfiles must make the link.
+        with open(os.path.join(HERE, "..", "freezy-arena.container")) as handle:
+            if "Timezone=local" not in handle.read():
+                self.skipTest("the arena's container no longer takes the host's time zone")
+        with open(os.path.join(HERE, "files", "usr", "lib", "tmpfiles.d", "freezy-image.conf")) as handle:
+            links = [line.split() for line in handle if line.startswith("L ")]
+        self.assertTrue(any(fields[1] == "/etc/localtime" and fields[-1].startswith("../usr/share/zoneinfo/")
+                            for fields in links),
+                        "nothing in the image's tmpfiles makes /etc/localtime")
+
 
 if __name__ == "__main__":
     unittest.main()
