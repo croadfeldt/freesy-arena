@@ -1,7 +1,7 @@
 # The field server as an image
 
 **Proposed.** 2026-11-23. Nothing here is built yet beyond the draft already in
-this folder.
+this folder and the two fixes named below.
 
 This settles how a field server is installed, updated and rebuilt as one
 Fedora image mode (bootc) image, so that someone other than me can stand one up.
@@ -18,17 +18,25 @@ creation) live only in `deploy/host/NETWORK.md` and in my head.
 
 `deploy/image/` already holds a draft: a `Containerfile`, `install.sh` and an
 overlay under `files/`. It builds the operating system, the host pieces and
-both containers into one image. Three things are wrong with it today:
+both containers into one image. I built it and booted it in a throwaway virtual
+machine. It did not come up to a working arena, for two reasons, and two more
+things are missing:
 
+- **Its boot-time setup failed.** `freezy-host-setup.service` runs
+  `host_setup.yaml`, whose step "Let driver stations through firewalld" runs
+  `freezy-firewalld-zones` from beside the playbooks. `install.sh` never
+  installed that file.
+- **The arena never started on a fresh install.** Its container takes the
+  host's time zone, and podman will not start it without `/etc/localtime`,
+  which `bootc install` does not make.
 - **No CI builds it.** `.github/workflows/images.yml` builds only the arena and
   Kea containers.
 - **Its README is missing.** The `Containerfile` points at
   `deploy/image/README.md`.
-- **Its boot-time setup fails.** `freezy-host-setup.service` runs
-  `host_setup.yaml`, whose step "Let driver stations through firewalld"
-  (`host_setup.yaml:170`) runs `freezy-firewalld-zones` from beside the
-  playbooks. `install.sh` never installs that file. I found this by reading the
-  code and have not run the image.
+
+The first two are fixed in their own pull request, "Make the field-server image
+boot to a working arena". With it, an image installed to an empty disk answers
+on 8080 about 30 seconds after power-on.
 
 ## Where each thing lives
 
@@ -184,8 +192,8 @@ the plan beside it cover that work. The standalone path does not wait for it.
 
 ## The work, in order
 
-1. Fix the missing `freezy-firewalld-zones` in `install.sh`, with a test that
-   every file a boot-time playbook runs is installed.
+1. Make the draft boot to a working arena: the missing `freezy-firewalld-zones`
+   and the missing time zone link, each with a test. In review.
 2. CI: build the image, lint it, run the deployment tests.
 3. One uid for `cheesy` from a build argument.
 4. The data partition: the mount, the arena's data folder bound from it, Kea's
