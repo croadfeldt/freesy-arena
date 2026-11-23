@@ -31,6 +31,7 @@ test ! -e /etc/selinux/targeted/tmp && test ! -e /etc/selinux/targeted/previous
 # deploy/host/README.md lists.
 install -D -m 0755 "$host/freezy-net-helper" /usr/libexec/freezy-net-helper
 install -D -m 0755 "$host/freezy-vm-interfaces" /usr/share/freezy-vm-interfaces
+install -D -m 0755 "$host/freezy-firewalld-zones" /usr/share/freezy-firewalld-zones
 install -D -m 0755 "$src/deploy/image/freezy-image-import" /usr/libexec/freezy-image-import
 install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" /usr/lib/systemd/system/
 install -D -m 0644 "$host/freezy-net.tmpfiles.conf" /usr/lib/tmpfiles.d/freezy-net.conf
@@ -51,7 +52,7 @@ date -u +%Y%m%d%H%M%S-$RANDOM > /usr/share/freezy-images/stamp
 
 # Nothing shipped may be group- or world-writable.
 chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/share/freezy-net \
-    /usr/share/freezy-vm-interfaces /usr/share/freezy-images /usr/share/containers/systemd \
+    /usr/share/freezy-vm-interfaces /usr/share/freezy-firewalld-zones /usr/share/freezy-images /usr/share/containers/systemd \
     /etc/containers/systemd /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf \
     /usr/lib/tmpfiles.d/freezy-image.conf /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests
 
