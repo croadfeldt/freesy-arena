@@ -2,7 +2,11 @@
 # both containers in one image, so a field server is installed and updated as a whole and works with no
 # network at the venue. Everything is built here in one pass from the Fedora image mode base:
 #
+#   deploy/jump/build-disk deploy/image/carried/freezy-jump.qcow2
 #   podman build -t localhost/freezy-field-server -f deploy/image/Containerfile .
+#
+# The first line builds the jump machines' disk, which this image carries so they start with no network.
+# Leave it out and the image still builds; it then cannot start jump machines.
 #
 # deploy/image/install.sh holds the list of what goes in. See deploy/image/README.md.
 ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:45
@@ -33,7 +37,9 @@ RUN dnf -y install kea && dnf clean all && rm -rf /var/cache/dnf
 FROM registry.fedoraproject.org/fedora:45 AS pack
 COPY --from=arena / /rootfs/arena
 COPY --from=kea / /rootfs/kea
-RUN mkdir /out \
+# Whatever is in deploy/image/carried: the jump machines' disk, when it has been built.
+COPY deploy/image/carried/ /out/
+RUN mkdir -p /out \
     && tar -C /rootfs/arena --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-arena-rootfs.tar . \
     && tar -C /rootfs/kea --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-kea-rootfs.tar .
 

@@ -4,7 +4,8 @@
 #   install.sh SOURCE IMAGES
 #
 # SOURCE  a checkout of this repository
-# IMAGES  a directory holding freezy-arena-rootfs.tar and freezy-kea-rootfs.tar
+# IMAGES  a directory holding freezy-arena-rootfs.tar and freezy-kea-rootfs.tar, and freezy-jump.qcow2
+#         (the jump machines' disk, from deploy/jump/build-disk) when the field server is to run them
 #
 # CHEESY_UID in the environment is the uid of the arena's account. The Containerfile sets it.
 #
@@ -38,7 +39,7 @@ rm -rf /var/cache/* /var/log/dnf* /var/lib/dnf /run/dnf
 # Prove the install really landed. On some build stores (rootless podman on ZFS is one) the package
 # database and the SELinux policy store lose their updates while the files still arrive, which gives an
 # image that looks fine and is not.
-rpm -q libvirt-daemon-kvm ansible-core firewalld nftables >/dev/null
+rpm -q libvirt-daemon-kvm ansible-core firewalld nftables python3-pyyaml >/dev/null
 test ! -e /etc/selinux/targeted/tmp && test ! -e /etc/selinux/targeted/previous
 
 # The host network helper, the team VLAN filter, the playbooks and the units, in the places
@@ -47,7 +48,10 @@ install -D -m 0755 "$host/freezy-net-helper" /usr/libexec/freezy-net-helper
 install -D -m 0755 "$host/freezy-vm-interfaces" /usr/share/freezy-vm-interfaces
 install -D -m 0755 "$host/freezy-firewalld-zones" /usr/share/freezy-firewalld-zones
 install -D -m 0755 "$src/deploy/image/freezy-image-import" /usr/libexec/freezy-image-import
-install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" /usr/lib/systemd/system/
+install -D -m 0755 "$host/freezy-jump" /usr/libexec/freezy-jump
+ln -s ../libexec/freezy-jump /usr/bin/freezy-jump
+install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" \
+    "$host/freezy-jump.service" /usr/lib/systemd/system/
 install -D -m 0644 "$host/freezy-net.tmpfiles.conf" /usr/lib/tmpfiles.d/freezy-net.conf
 mkdir -p /usr/share/freezy-net
 cp -r "$host/ansible/." /usr/share/freezy-net/
@@ -68,8 +72,16 @@ install -d /usr/share/freezy-images
 install -m 0644 "$images/freezy-arena-rootfs.tar" "$images/freezy-kea-rootfs.tar" /usr/share/freezy-images/
 date -u +%Y%m%d%H%M%S-$RANDOM > /usr/share/freezy-images/stamp
 
+# The jump machines' disk image (deploy/jump/build-disk), when the build was given one. A field server
+# without it runs, and `freezy-jump` says the disk is missing when asked to start a machine.
+if [ -f "$images/freezy-jump.qcow2" ]; then
+    install -m 0644 "$images/freezy-jump.qcow2" /usr/share/freezy-images/freezy-jump.qcow2
+else
+    echo "install.sh: no freezy-jump.qcow2 given; this image cannot start jump machines" >&2
+fi
+
 # Nothing shipped may be group- or world-writable.
-chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/share/freezy-net \
+chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-jump /usr/share/freezy-net \
     /usr/share/freezy-vm-interfaces /usr/share/freezy-firewalld-zones /usr/share/freezy-images /usr/share/containers/systemd \
     /etc/containers/systemd /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf \
     /usr/lib/tmpfiles.d/freezy-image.conf /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests
@@ -78,5 +90,5 @@ chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /u
 firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp
 systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
     libvirt-guests.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
-    freezy-firewall.service freezy-net.path
+    freezy-firewall.service freezy-net.path freezy-jump.service
 systemctl --global enable freezy-arena-image.service

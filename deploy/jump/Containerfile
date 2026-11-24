@@ -32,5 +32,9 @@ COPY --chmod=0644 deploy/host/ansible/jump_vm.yaml deploy/host/ansible/vars.yaml
 RUN systemctl enable firewalld sshd qemu-guest-agent freezy-jump-role.service \
     && systemctl disable dnsmasq.service 2>/dev/null; systemctl mask dnsmasq.service
 
+# A serial console, so the field server can log what the machine says while it sets itself up.
+RUN mkdir -p /usr/lib/bootc/kargs.d \
+    && printf 'kargs = ["console=tty0", "console=ttyS0,115200n8"]\n' > /usr/lib/bootc/kargs.d/10-freezy-console.toml
+
 # Fails the build if a unit or bootc setting is malformed.
 RUN bootc container lint

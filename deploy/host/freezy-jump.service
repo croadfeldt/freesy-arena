@@ -1,0 +1,14 @@
+# At every boot, make the jump machines match the settings in /etc/freezy-net/vars.yaml: start the
+# ones that are wanted, remove the ones that are not (freezy-jump).
+[Unit]
+Description=Start the Freezy Arena jump machines the settings ask for
+After=freezy-host-network.service virtqemud.socket local-fs.target
+Wants=freezy-host-network.service virtqemud.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/freezy-jump apply
+
+[Install]
+WantedBy=multi-user.target

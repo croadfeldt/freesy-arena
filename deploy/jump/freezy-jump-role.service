@@ -15,6 +15,10 @@ RemainAfterExit=yes
 ImportCredential=freezy.jump
 Environment=ANSIBLE_LOCAL_TEMP=/run/freezy-jump/ansible ANSIBLE_REMOTE_TEMP=/run/freezy-jump/ansible HOME=/root
 ExecStart=/usr/local/sbin/freezy-jump-role
+# Also to the serial console, which the field server keeps a log of: `freezy-jump status` and
+# `freezy-jump log` read this machine's setup from there.
+StandardOutput=journal+console
+StandardError=journal+console
 TimeoutStartSec=600
 
 [Install]

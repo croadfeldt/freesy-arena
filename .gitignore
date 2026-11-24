@@ -31,3 +31,7 @@ _testmain.go
 static/logs
 static/img/avatars
 __pycache__/
+
+# Built files the field-server image carries (deploy/image/carried/README)
+deploy/image/carried/*
+!deploy/image/carried/README

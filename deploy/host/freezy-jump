@@ -1,0 +1,443 @@
+#!/usr/bin/python3
+"""Turn the field server's jump machines on and off, and keep them the way the settings say.
+
+Two settings in /etc/freezy-net/vars.yaml decide which jump machines run (see NETWORK.md):
+
+  freezy_venue_isolation  true or false. True runs the external jump machine, between the venue's
+                          network and the transit network. It keeps the venue's subnets apart from
+                          the field's and is the way in to the field server.
+  freezy_admin_router     internal, gateway or none: who is gateway and DNS for the admin network.
+                          internal runs the internal jump machine, between the transit network and
+                          the admin network. gateway means a hardware router does it. none means
+                          nothing here does (a router in bridge mode).
+
+  freezy-jump status                         what is set, what is running, and each machine's addresses
+  freezy-jump venue-isolation on|off         change a setting, then apply
+  freezy-jump admin-router internal|gateway|none
+  freezy-jump apply                          make the machines match the settings (run at every boot)
+  freezy-jump restart                        apply, then restart every machine that should run
+  freezy-jump log external|internal          what a machine logged while setting itself up, this boot
+
+Both machines start from one disk image carried in the field server's image. Turning a machine on
+copies that image to the kept data folder if the machine has no disk yet, defines the machine and
+starts it. Turning it off shuts it down and removes its definition; its disk stays. A machine is told
+its role, its cards and its ssh keys when it starts (deploy/jump/freezy-jump-role), so a changed
+setting reaches a running machine at its next start: `freezy-jump apply --restart` does that now.
+
+A machine sets itself up when it starts and can fail at it: the internal machine refuses the gateway
+address while a router still answers there. `status` shows that, `log` shows why, and `restart` has it
+try again.
+"""
+import base64
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+
+import yaml
+
+DEFAULTS = "/usr/share/freezy-net/vars.yaml"
+OVERRIDES = "/etc/freezy-net/vars.yaml"
+BASE_DISK = "/usr/share/freezy-images/freezy-jump.qcow2"
+DISKS = "/var/lib/freezy/vm"
+# libvirt keeps what each machine writes to its serial console here; the machine reports on its own
+# setup there (deploy/jump/freezy-jump-role).
+CONSOLE_LOGS = "/var/log/libvirt/qemu"
+KEYS = ["/etc/freezy-net/jump_authorized_keys", "/root/.ssh/authorized_keys"]
+ROUTERS = ("internal", "gateway", "none")
+# role: (machine name, the network its outside card is on, the network its inside card is on)
+ROLES = {"external": ("freezy-jump-external", "venue", "transit"),
+         "internal": ("freezy-jump-internal", "transit", "admin")}
+# Settings handed to the machine, for the playbook it runs on itself.
+PASSED_ON = ["freezy_transit_candidates", "freezy_transit_wait_seconds", "freezy_transit_lease_time",
+             "freezy_transit_client_id", "freezy_fms_gateway", "freezy_fms_network", "freezy_fms_address",
+             "freezy_admin_dhcp_first", "freezy_admin_dhcp_last", "freezy_admin_dhcp_lease_time"]
+
+
+class Refused(Exception):
+    pass
+
+
+def load_settings(defaults=DEFAULTS, overrides=OVERRIDES):
+    settings = {}
+    for path in (defaults, overrides):
+        if os.path.isfile(path):
+            with open(path) as handle:
+                settings.update(yaml.safe_load(handle) or {})
+    return settings
+
+
+def wanted(settings):
+    """The roles that should be running, and any warning about the combination."""
+    isolation = settings.get("freezy_venue_isolation", True)
+    router = settings.get("freezy_admin_router", "internal")
+    if not isinstance(isolation, bool):
+        raise Refused("freezy_venue_isolation must be true or false, not %r" % (isolation,))
+    if router not in ROUTERS:
+        raise Refused("freezy_admin_router must be one of %s, not %r" % (", ".join(ROUTERS), router))
+    roles = (["external"] if isolation else []) + (["internal"] if router == "internal" else [])
+    warning = None
+    if isolation and router == "none":
+        warning = ("venue isolation is on and nothing routes the admin network, so the admin network "
+                   "has no way out. The way in to the field server still works.")
+    return roles, warning
+
+
+def host_interface(settings, network):
+    """The field server's VLAN interface for a network named in freezy_uplink_vlans."""
+    for entry in settings.get("freezy_uplink_vlans", []):
+        if entry.get("name") == network:
+            return entry["connection"]
+    raise Refused("freezy_uplink_vlans has no network named %s" % network)
+
+
+def mac(machine, side):
+    """A fixed MAC address for one card, so the machine finds its cards the same way every time."""
+    digest = hashlib.sha256(("%s/%s" % (machine, side)).encode()).digest()
+    return "52:54:00:%02x:%02x:%02x" % (digest[0], digest[1], digest[2])
+
+
+def read_keys(paths=KEYS):
+    """ssh keys for the jump machines: the first of the files that exists and holds a key."""
+    for path in paths:
+        try:
+            with open(path) as handle:
+                keys = [line.strip() for line in handle if line.strip() and not line.startswith("#")]
+        except OSError:
+            continue
+        if keys:
+            return keys
+    return []
+
+
+def credential(role, settings, keys):
+    """What the machine is told when it starts: the freezy.jump credential, as JSON text."""
+    name = ROLES[role][0]
+    passed = {key: settings[key] for key in PASSED_ON if key in settings}
+    # Nothing else on the image's jump machine answers DNS, so it does.
+    passed["freezy_transit_dns"] = True
+    return json.dumps({"name": name, "role": role, "outside_mac": mac(name, "outside"),
+                       "inside_mac": mac(name, "inside"), "ssh_keys": keys, "vars": passed},
+                      sort_keys=True, separators=(",", ":"))
+
+
+def domain_xml(role, settings, keys, disks=DISKS):
+    """The libvirt definition of a jump machine."""
+    name, outside, inside = ROLES[role]
+    secret = base64.b64encode(credential(role, settings, keys).encode()).decode()
+    cards = "".join("""
+    <interface type='direct'>
+      <mac address='%s'/>
+      <source dev='%s' mode='bridge'/>
+      <model type='virtio'/>
+    </interface>""" % (mac(name, side), host_interface(settings, network))
+                    for side, network in (("outside", outside), ("inside", inside)))
+    return """<domain type='kvm'>
+  <name>%s</name>
+  <memory unit='MiB'>%d</memory>
+  <vcpu>2</vcpu>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <boot dev='hd'/>
+    <smbios mode='sysinfo'/>
+  </os>
+  <sysinfo type='smbios'>
+    <oemStrings>
+      <entry>io.systemd.credential.binary:freezy.jump=%s</entry>
+    </oemStrings>
+  </sysinfo>
+  <features><acpi/><apic/></features>
+  <cpu mode='host-passthrough'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2' discard='unmap'/>
+      <source file='%s'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>%s
+    <serial type='pty'>
+      <log file='%s' append='off'/>
+      <target port='0'/>
+    </serial>
+    <console type='pty'><target type='serial' port='0'/></console>
+    <channel type='unix'>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+    </channel>
+    <rng model='virtio'><backend model='random'>/dev/urandom</backend></rng>
+    <memballoon model='none'/>
+  </devices>
+</domain>
+""" % (name, int(settings.get("freezy_jump_memory_mib", 1024)), secret,
+       os.path.join(disks, name + ".qcow2"), cards, console_log(name))
+
+
+def told(xml_text):
+    """The credential inside a machine's definition, or None. Used to see whether a defined machine
+    was told the same thing we would tell it now."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    for entry in root.findall("./sysinfo/oemStrings/entry"):
+        if entry.text and entry.text.startswith("io.systemd.credential.binary:freezy.jump="):
+            return entry.text.split("=", 1)[1]
+    return None
+
+
+def console_log(name):
+    return os.path.join(CONSOLE_LOGS, name + "-console.log")
+
+
+def console_log_of(xml_text):
+    log = ET.fromstring(xml_text).find("./devices/serial/log")
+    return log.get("file") if log is not None else None
+
+
+MARKER = re.compile(r"freezy-jump-role: (setting up|set up|FAILED)")
+
+
+def setup_state(console_text):
+    """How a machine's own setup went, from what it wrote to its console: the last thing it said."""
+    said = MARKER.findall(console_text or "")
+    return {"setting up": "activating", "set up": "active", "FAILED": "failed"}.get(said[-1] if said else "")
+
+
+def setup_log(console_text):
+    """The part of a machine's console that is its latest setup, without the playbook's chatter."""
+    lines = (console_text or "").replace("\r", "").splitlines()
+    starts = [i for i, line in enumerate(lines) if "freezy-jump-role: setting up" in line]
+    kept = []
+    for line in lines[starts[-1] if starts else 0:]:
+        # The console also carries the kernel's and other units' lines; keep the setup's own.
+        found = re.search(r"freezy-jump-role\[\d+\]: (.*)", line)
+        text = found.group(1) if found else ""
+        if text.strip() and not text.startswith(("skipping:", "ok: [", "changed: [")):
+            kept.append(text)
+    return kept
+
+
+def cards_of(xml_text):
+    root = ET.fromstring(xml_text)
+    return [(card.find("mac").get("address"), card.find("source").get("dev"))
+            for card in root.findall("./devices/interface")]
+
+
+def set_setting(text, key, value):
+    """Return the settings file's text with one key set, leaving every other line as it was."""
+    line = "%s: %s" % (key, value)
+    pattern = re.compile(r"(?m)^%s\s*:.*$" % re.escape(key))
+    if pattern.search(text):
+        return pattern.sub(line, text, count=1)
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text + line + "\n"
+
+
+def addresses(faces):
+    """{MAC: [IPv4 address/prefix, ...]} from the guest agent's list of a machine's cards."""
+    found = {}
+    for face in faces or []:
+        found[face.get("hardware-address", "")] = [
+            "%s/%s" % (entry["ip-address"], entry["prefix"])
+            for entry in face.get("ip-addresses", []) if entry.get("ip-address-type") == "ipv4"]
+    return found
+
+
+def describe(role, by_mac, setup):
+    """One line on a running machine: the address of each card, and how its own setup went."""
+    name, outside, inside = ROLES[role]
+    if by_mac is None:
+        return "not answering yet"
+    cards = ", ".join("%s %s" % (network, " ".join(by_mac.get(mac(name, side), [])) or "no address")
+                      for side, network in (("outside", outside), ("inside", inside)))
+    how = {"active": "set up", "activating": "setting itself up",
+           "failed": "ITS SETUP FAILED: freezy-jump log %s" % role}.get(setup, "setup state unknown")
+    return "%s; %s" % (cards, how)
+
+
+# ---- Everything below talks to libvirt and the disk. ----
+
+def virsh(*args, check=True):
+    return subprocess.run(("virsh", "-q") + args, check=check, capture_output=True, text=True)
+
+
+def state(name):
+    """'running', 'shut off', ... or None when the machine is not defined."""
+    result = virsh("domstate", name, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def stop(name, timeout=90):
+    if state(name) != "running":
+        return
+    virsh("shutdown", name, check=False)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if state(name) != "running":
+            return
+        time.sleep(2)
+    virsh("destroy", name, check=False)
+
+
+def agent(name, command, arguments=None):
+    """Ask a machine's guest agent something. None when it does not answer."""
+    request = {"execute": command}
+    if arguments:
+        request["arguments"] = arguments
+    result = virsh("qemu-agent-command", "--timeout", "5", name, json.dumps(request), check=False)
+    try:
+        return json.loads(result.stdout)["return"] if result.returncode == 0 else None
+    except (ValueError, KeyError):
+        return None
+
+
+def turn_on(role, settings, keys, restart, say):
+    name = ROLES[role][0]
+    for network in ROLES[role][1:]:
+        dev = host_interface(settings, network)
+        if not os.path.exists("/sys/class/net/" + dev):
+            raise Refused("%s needs the field server's %s interface (%s), which does not exist"
+                          % (name, network, dev))
+    disk = os.path.join(DISKS, name + ".qcow2")
+    if not os.path.exists(disk):
+        if not os.path.exists(BASE_DISK):
+            raise Refused("%s has no disk and this field server carries no jump disk image (%s)"
+                          % (name, BASE_DISK))
+        os.makedirs(DISKS, mode=0o711, exist_ok=True)
+        shutil.copyfile(BASE_DISK, disk + ".new")
+        os.chmod(disk + ".new", 0o600)
+        os.replace(disk + ".new", disk)
+        subprocess.run(["restorecon", "-R", DISKS], check=False)
+        say("%s: new disk from the carried image" % name)
+    new = domain_xml(role, settings, keys)
+    now = virsh("dumpxml", "--inactive", "--security-info", name, check=False)
+    same = (now.returncode == 0 and told(now.stdout) == told(new)
+            and cards_of(now.stdout) == cards_of(new)
+            and console_log_of(now.stdout) == console_log_of(new))
+    if not same:
+        path = "/run/freezy-jump-%s.xml" % role
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+            handle.write(new)
+        virsh("define", path)
+        os.unlink(path)
+        say("%s: %s" % (name, "defined" if now.returncode else "definition updated"))
+    virsh("autostart", name)
+    running = state(name) == "running"
+    if running and restart == "all":
+        stop(name)
+        running = False
+    elif running and not same:
+        if restart:
+            stop(name)
+            running = False
+        else:
+            say("%s: is running with its old settings; `freezy-jump apply --restart` restarts it" % name)
+    if not running:
+        virsh("start", name)
+        say("%s: started" % name)
+
+
+def turn_off(role, say):
+    name = ROLES[role][0]
+    if state(name) is None:
+        return
+    stop(name)
+    virsh("undefine", name)
+    say("%s: stopped and removed; its disk is kept" % name)
+
+
+def apply(settings, restart=False, say=print):
+    roles, warning = wanted(settings)
+    if warning:
+        say("warning: " + warning)
+    keys = read_keys()
+    if roles and not keys:
+        say("warning: no ssh keys for the jump machines (%s); nobody will be able to log in to them" % KEYS[0])
+    failed = False
+    for role in ROLES:
+        try:
+            if role in roles:
+                turn_on(role, settings, keys, restart, say)
+            else:
+                turn_off(role, say)
+        except (Refused, subprocess.CalledProcessError, OSError) as err:
+            detail = getattr(err, "stderr", "") or ""
+            say("%s: %s %s" % (ROLES[role][0], err, detail.strip()))
+            failed = True
+    return 1 if failed else 0
+
+
+def read_console(name):
+    try:
+        with open(console_log(name), errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def status(settings):
+    roles, warning = wanted(settings)
+    print("venue isolation: %s" % ("on" if settings.get("freezy_venue_isolation", True) else "off"))
+    print("admin router:    %s" % settings.get("freezy_admin_router", "internal"))
+    for role, (name, outside, inside) in ROLES.items():
+        now = state(name)
+        detail = ""
+        if now == "running":
+            faces = agent(name, "guest-network-get-interfaces")
+            setup = setup_state(read_console(name))
+            detail = "  " + describe(role, addresses(faces) if faces is not None else None, setup)
+        print("%-22s %-8s %s%s" % (name, "wanted" if role in roles else "off", now or "not defined", detail))
+    if warning:
+        print("warning: " + warning)
+    return 0
+
+
+def change(key, value):
+    try:
+        with open(OVERRIDES) as handle:
+            text = handle.read()
+    except FileNotFoundError:
+        text = ""
+    os.makedirs(os.path.dirname(OVERRIDES), exist_ok=True)
+    with open(OVERRIDES + ".new", "w") as handle:
+        handle.write(set_setting(text, key, value))
+    os.replace(OVERRIDES + ".new", OVERRIDES)
+
+
+def main(argv):
+    args = argv[1:]
+    if args == ["status"]:
+        return status(load_settings())
+    if args in (["apply"], ["apply", "--restart"]):
+        return apply(load_settings(), restart="--restart" in args)
+    if args == ["restart"]:
+        return apply(load_settings(), restart="all")
+    if len(args) == 2 and args[0] == "log" and args[1] in ROLES:
+        name = ROLES[args[1]][0]
+        if state(name) != "running":
+            raise Refused("%s is not running" % name)
+        print("\n".join(setup_log(read_console(name))))
+        return 0
+    if len(args) == 2 and args[0] == "venue-isolation" and args[1] in ("on", "off"):
+        change("freezy_venue_isolation", "true" if args[1] == "on" else "false")
+        return apply(load_settings())
+    if len(args) == 2 and args[0] == "admin-router" and args[1] in ROUTERS:
+        change("freezy_admin_router", args[1])
+        return apply(load_settings())
+    print(__doc__.split("\n\n")[2], file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except Refused as err:
+        print("freezy-jump: %s" % err, file=sys.stderr)
+        sys.exit(1)

@@ -13,7 +13,21 @@ freezy_uplink_vlans:
   - { name: transit, vlan: 998, connection: vlan998 }
   - { name: admin,   vlan: 100, connection: vlan100 }
 
-# The jump virtual machine and the VLAN interface each of its network cards attaches to, in the order
+# Which jump machines the field server runs (freezy-jump, on a field server installed from the image).
+# Change them with `freezy-jump venue-isolation on|off` and `freezy-jump admin-router ...`, which write
+# /etc/freezy-net/vars.yaml and apply the change. See ../NETWORK.md, "Which jump machines run".
+#
+# true runs the external jump machine, between the venue's network and the transit network. It keeps
+# the venue's subnets apart from the field's and is the way in to the field server.
+freezy_venue_isolation: true
+# Who is gateway and DNS for the admin network: internal (the internal jump machine), gateway (a
+# hardware router with its WAN port on the transit VLAN), or none (nothing here; a router in bridge mode).
+freezy_admin_router: internal
+# Memory for each jump machine.
+freezy_jump_memory_mib: 1024
+
+# For a jump machine made by hand, outside the image: the machine and the VLAN interface each of its
+# network cards attaches to (jump_vms.yaml), in the order
 # the cards appear in the machine. Set the real machine name in /etc/freezy-net/vars.yaml.
 freezy_jump_vms:
   - { domain: jump-external, interfaces: [vlan998, vlan999] }

@@ -53,11 +53,15 @@ class DhcpConfigTest(unittest.TestCase):
 class MainTest(unittest.TestCase):
     """main() against a fake machine: the settings file, nmcli and arping are stood in for."""
 
-    def run_main(self, now, config_on_disk, someone_answers):
+    def run_main(self, now, config_on_disk, someone_answers, on_the_card=None):
         calls = []
+        if on_the_card is None:
+            on_the_card = now.startswith("manual")
 
         def fake_run(*cmd):
             calls.append(cmd)
+            if cmd[0] == "ip":
+                return "2: enp2s0    inet 10.0.100.1/24 brd 10.0.100.255 scope global enp2s0\n" if on_the_card else ""
             return now if cmd[:2] == ("nmcli", "-g") else ""
 
         files = {mod.CONFIG: __import__("json").dumps(CFG)}
@@ -101,6 +105,29 @@ class MainTest(unittest.TestCase):
         self.assertEqual(code, 0)
         probe.assert_not_called()
         self.assertEqual(written, {})
+
+    def test_an_address_it_held_before_and_a_router_holds_now_is_left_alone(self):
+        # Seen in a VM: the internal machine was turned off, a router took the gateway address, and
+        # the machine was started again from its kept disk. Its connection still named the address,
+        # so it skipped the question, and failed later at a check that had nothing to do with it.
+        wanted = mod.dhcp_config(CFG, mod.plan(CFG))
+        code, calls, written, probe = self.run_main("manual\n10.0.100.1/24\n", wanted, someone_answers=True,
+                                                    on_the_card=False)
+        self.assertEqual(code, 1)
+        probe.assert_called_once_with("enp2s0", "10.0.100.1")
+        self.assertFalse(any(c[:3] == ("nmcli", "connection", "up") for c in calls))
+
+    def test_an_address_it_held_before_and_nobody_holds_now_is_taken_back(self):
+        wanted = mod.dhcp_config(CFG, mod.plan(CFG))
+        code, calls, _, _ = self.run_main("manual\n10.0.100.1/24\n", wanted, someone_answers=False,
+                                          on_the_card=False)
+        self.assertEqual(code, 0)
+        self.assertTrue(any(c[:3] == ("nmcli", "connection", "up") for c in calls))
+
+    def test_networkmanager_is_told_to_check_the_address_before_using_it(self):
+        _, calls, _, _ = self.run_main("disabled\n\n", None, someone_answers=False)
+        modify = next(c for c in calls if c[:3] == ("nmcli", "connection", "modify"))
+        self.assertEqual(modify[modify.index("ipv4.dad-timeout") + 1], "3000")
 
 
 if __name__ == "__main__":

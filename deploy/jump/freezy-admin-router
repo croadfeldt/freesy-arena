@@ -6,10 +6,14 @@ network and its inside card on the admin network (FMS and field equipment). This
 gateway address on the inside card and points dnsmasq (freezy-admin-dhcp.service) at it, to answer DNS
 and hand out addresses from the range in the settings.
 
-It will not fight a router. Before it takes the gateway address for the first time it asks the admin
-network whether something already answers there. If something does, it leaves the card without an
-address and fails, because two gateways on one address break the field in ways that are slow to find.
-The setting to change is freezy_admin_router on the field server.
+It will not fight a router. Whenever the inside card does not hold the gateway address, it asks the
+admin network whether something already answers there. If something does, it leaves the card without
+the address and fails, because two gateways on one address break the field in ways that are slow to
+find. The setting to change is freezy_admin_router on the field server.
+
+That covers a machine that held the address before, was turned off while a router took its place,
+and is started again: NetworkManager checks the address before it brings the card up (ipv4.dad-timeout,
+set below) and leaves it off, and this script then says why.
 
 Run at boot (freezy-admin-router.service) and by jump_vm.yaml. Settings: /etc/freezy-jump/admin.json.
 """
@@ -73,6 +77,11 @@ def answered(ifname, address):
     return result.returncode == 1
 
 
+def holds(ifname, address):
+    """True if the card has the address right now, whatever its connection is set to."""
+    return ("inet %s " % address) in run("ip", "-4", "-o", "addr", "show", "dev", ifname)
+
+
 def main(argv):
     if len(argv) != 1:
         print("usage: freezy-admin-router", file=sys.stderr)
@@ -89,8 +98,8 @@ def main(argv):
 
     now = run("nmcli", "-g", "ipv4.method,ipv4.addresses", "connection", "show",
               cfg["inside_connection"]).splitlines() + ["", ""]
-    mine = now[0] == "manual" and now[1] == addresses["address"]
-    if mine and config_ok:
+    mine = holds(cfg["inside_interface"], addresses["address"])
+    if mine and config_ok and now[0] == "manual" and now[1] == addresses["address"]:
         print("freezy-admin-router: gateway %s is in place; nothing changed" % addresses["address"])
         return 0
     if not mine and answered(cfg["inside_interface"], addresses["gateway"]):
@@ -102,7 +111,8 @@ def main(argv):
     with open(DHCP_CONFIG, "w") as handle:
         handle.write(wanted_config)
     run("nmcli", "connection", "modify", cfg["inside_connection"], "ipv4.method", "manual",
-        "ipv4.addresses", addresses["address"], "ipv4.gateway", "", "ipv4.dns", "", "ipv4.never-default", "yes")
+        "ipv4.addresses", addresses["address"], "ipv4.gateway", "", "ipv4.dns", "", "ipv4.never-default", "yes",
+        "ipv4.dad-timeout", "3000")
     run("nmcli", "connection", "up", cfg["inside_connection"])
     run(*cfg.get("dhcp_restart_command", DHCP_RESTART))
     print("freezy-admin-router: gateway and DNS for the admin network at %s; handing out %s to %s"
