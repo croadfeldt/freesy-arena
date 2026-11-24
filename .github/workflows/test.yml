@@ -36,5 +36,9 @@ jobs:
             echo "::endgroup::"
           done
           exit $status
+      # The test runs unprivileged in its own user namespace, as it does on a developer's machine.
+      # Ubuntu's runners switch that off for unconfined programs; turn it back on for this job.
       - name: Team VLAN filter test
-        run: sudo deploy/host/test_freezy_firewall.sh
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          deploy/host/test_freezy_firewall.sh
