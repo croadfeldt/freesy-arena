@@ -6,11 +6,25 @@
 # SOURCE  a checkout of this repository
 # IMAGES  a directory holding freezy-arena-rootfs.tar and freezy-kea-rootfs.tar
 #
+# CHEESY_UID in the environment is the uid of the arena's account. The Containerfile sets it.
+#
 # deploy/image/Containerfile uses it, and so can any other image build that starts from the same base
 # (a fleet site's, for example), so the list of what a field server needs lives in one place.
 set -euo pipefail
 src=$1 images=$2
 host=$src/deploy/host
+
+# The arena account's uid. It names the folder the arena's container unit lives in, so it is settled
+# here, once, and must not belong to anything in the base image or to an account a site added.
+uid=${CHEESY_UID:?set CHEESY_UID to the uid for the cheesy account}
+case $uid in ''|*[!0-9]*) echo "install.sh: CHEESY_UID must be a number, got '$uid'" >&2; exit 1 ;; esac
+taken=$( { getent passwd "$uid"; getent group "$uid"; \
+    grep -rhE "^[ug][[:space:]]+[^[:space:]]+[[:space:]]+$uid([[:space:]:]|\$)" /usr/lib/sysusers.d /etc/sysusers.d 2>/dev/null; } || true)
+if [ -n "$taken" ]; then
+    echo "install.sh: uid $uid is already in use in this image; pick another CHEESY_UID:" >&2
+    echo "$taken" >&2
+    exit 1
+fi
 
 # Virtual machines (the jump machine), Ansible for the network playbooks, the firewall, a few tools.
 # libvirt's `default` network is not installed: its DHCP server would hold the port Kea needs. Weak
@@ -39,10 +53,14 @@ mkdir -p /usr/share/freezy-net
 cp -r "$host/ansible/." /usr/share/freezy-net/
 install -m 0644 "$host/freezy-field.nft" /usr/share/freezy-net/freezy-field.nft
 install -D -m 0644 "$host/freezy-kea.container" /usr/share/containers/systemd/freezy-kea.container
-install -D -m 0644 "$src/deploy/freezy-arena.container" /etc/containers/systemd/users/1001/freezy-arena.container
+install -D -m 0644 "$src/deploy/freezy-arena.container" "/etc/containers/systemd/users/$uid/freezy-arena.container"
+install -D -m 0644 "$src/deploy/image/freezy-arena.container.d/10-image.conf" \
+    "/etc/containers/systemd/users/$uid/freezy-arena.container.d/10-image.conf"
 
 # The arena's account, the boot-time units and their settings.
 cp -r "$src/deploy/image/files/." /
+sed -i "s/@CHEESY_UID@/$uid/" /usr/lib/sysusers.d/freezy.conf
+grep -qE "^u cheesy $uid " /usr/lib/sysusers.d/freezy.conf
 
 # The Kea and arena containers, carried inside this image and turned into container images at boot.
 # The stamp changes with every build, so an updated operating system image replaces them.

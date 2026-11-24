@@ -38,9 +38,12 @@ RUN mkdir /out \
     && tar -C /rootfs/kea --exclude=./proc --exclude=./sys --exclude=./dev -cf /out/freezy-kea-rootfs.tar .
 
 FROM ${BASE_IMAGE}
+# The uid of `cheesy`, the account the arena runs as. 880 is free in the Fedora base, below the range
+# systemd hands out on its own and away from where sites number people. The build fails if it is taken.
+ARG CHEESY_UID=880
 RUN --mount=type=bind,target=/src \
     --mount=type=bind,from=pack,source=/out,target=/images \
-    /src/deploy/image/install.sh /src /images
+    CHEESY_UID=${CHEESY_UID} /src/deploy/image/install.sh /src /images
 
 # Site-specific files (host name, ssh keys, sudo rules, /etc/freezy-net/vars.yaml). Empty in this
 # repository; a site's own build adds its files on top.
