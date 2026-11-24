@@ -69,6 +69,14 @@ class ChooseTest(unittest.TestCase):
                      "dhcp-host=id:00:66:72:65:65:7a:79:2d:66:69:65:6c:64:2d:73:65:72:76:65:72,172.31.254.253"]:
             self.assertIn(line + "\n", text)
 
+    def test_dns_is_answered_on_the_inside_card_only_when_asked_for(self):
+        import ipaddress
+        cfg = {"inside_interface": "eth0", "field_server_client_id": "freezy-field-server", "dns": True}
+        lines = mod.dhcp_config(cfg, mod.plan(ipaddress.ip_network("172.31.254.248/29"))).splitlines()
+        self.assertNotIn("port=0", lines)
+        self.assertIn("except-interface=lo", lines)
+        self.assertIn("dhcp-option=option:dns-server,172.31.254.254", lines)
+
 
 if __name__ == "__main__":
     unittest.main()

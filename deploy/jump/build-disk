@@ -1,0 +1,26 @@
+#!/usr/bin/bash
+# Build the jump machine's disk image: the image from deploy/jump/Containerfile, installed to a disk
+# file, ready to boot. The field server's image carries the result, so a field server can start its
+# jump machines with no network.
+#
+#   deploy/jump/build-disk OUTPUT.qcow2
+#
+# Installing to a disk file needs loop devices, so this runs podman as root (through sudo when it is
+# not root already). Nothing else here needs root. Run it from anywhere inside the repository.
+set -euo pipefail
+out=${1:?usage: build-disk OUTPUT.qcow2}
+size=${FREEZY_JUMP_DISK_SIZE:-6G}
+image=${FREEZY_JUMP_IMAGE:-localhost/freezy-jump:latest}
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+if [ "$(id -u)" = 0 ]; then root=(); else root=(sudo); fi
+work=$(mktemp -d "${TMPDIR:-/var/tmp}/freezy-jump-disk.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+
+"${root[@]}" podman build --security-opt label=disable -t "$image" -f "$repo/deploy/jump/Containerfile" "$repo"
+truncate -s "$size" "$work/disk.raw"
+"${root[@]}" podman run --rm --privileged --pid=host --security-opt label=type:unconfined_t \
+    -v /dev:/dev -v /var/lib/containers:/var/lib/containers -v "$work":/output \
+    "$image" bootc install to-disk --via-loopback --generic-image --filesystem xfs /output/disk.raw
+qemu-img convert -c -O qcow2 "$work/disk.raw" "$work/disk.qcow2"
+mv "$work/disk.qcow2" "$out"
+echo "build-disk: wrote $out ($(du -h "$out" | cut -f1))"

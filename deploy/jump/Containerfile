@@ -1,0 +1,36 @@
+# The jump virtual machine as an image mode (bootc) system. One image serves both jump roles; the
+# field server tells each machine which it is when it starts it (freezy-jump-role). Build from the
+# top of the repository:
+#
+#   podman build -t localhost/freezy-jump -f deploy/jump/Containerfile .
+#
+# deploy/jump/build-disk turns the result into the disk image the field server's image carries.
+ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:45
+FROM ${BASE_IMAGE}
+
+# The firewall, DHCP and DNS, Ansible for the playbook the machine runs on itself, and the guest agent
+# so the field server can shut the machine down cleanly. Weak dependencies are left out.
+RUN dnf -y --setopt=install_weak_deps=False install firewalld dnsmasq ansible-core python3 iputils \
+        qemu-guest-agent \
+    && dnf clean all && rm -rf /var/cache/* /var/log/dnf* /var/lib/dnf /run/dnf \
+    && rpm -q firewalld dnsmasq ansible-core qemu-guest-agent >/dev/null
+
+# The scripts and units for both roles. A unit runs only on a machine whose role wrote its settings.
+COPY --chmod=0755 deploy/jump/freezy-jump-role deploy/jump/freezy-transit-select \
+     deploy/jump/freezy-admin-router /usr/local/sbin/
+COPY --chmod=0755 deploy/jump/90-freezy-transit /usr/lib/NetworkManager/dispatcher.d/90-freezy-transit
+COPY --chmod=0644 deploy/jump/freezy-jump-role.service deploy/jump/freezy-transit.service \
+     deploy/jump/freezy-transit-dhcp.service deploy/jump/freezy-admin-router.service \
+     deploy/jump/freezy-admin-dhcp.service /usr/lib/systemd/system/
+# The playbook and its default settings, in the same layout as the repository so its paths hold.
+COPY --chmod=0644 deploy/host/ansible/jump_vm.yaml deploy/host/ansible/vars.yaml /usr/share/freezy-jump/ansible/
+
+# freezy-jump-role is the only unit of ours started at boot. The playbook it runs does what
+# freezy-transit.service and freezy-admin-router.service do on a machine set up by hand, and starts
+# the DHCP unit once the inside card has its address: started earlier, dnsmasq does not listen on the
+# card. dnsmasq runs only as those DHCP units, never as the packaged service.
+RUN systemctl enable firewalld sshd qemu-guest-agent freezy-jump-role.service \
+    && systemctl disable dnsmasq.service 2>/dev/null; systemctl mask dnsmasq.service
+
+# Fails the build if a unit or bootc setting is malformed.
+RUN bootc container lint

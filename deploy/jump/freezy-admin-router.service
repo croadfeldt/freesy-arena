@@ -1,0 +1,15 @@
+# At boot, check the internal jump machine still holds the admin network's gateway address and its
+# DHCP and DNS settings are current. Only on a machine given the internal role.
+[Unit]
+Description=Gateway for the Freezy Arena admin network
+After=NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=/etc/freezy-jump/admin.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/freezy-admin-router
+
+[Install]
+WantedBy=multi-user.target

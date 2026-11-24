@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+"""Set a jump machine up for the role the field server gave it.
+
+One disk image serves both jump roles. The field server tells each machine which one it is when it
+starts it, as a systemd credential named freezy.jump (passed through the virtual machine's firmware
+strings, so it needs no network and no second disk). The credential is JSON:
+
+    {"name": "jump-external", "role": "external",
+     "outside_mac": "52:54:00:..", "inside_mac": "52:54:00:..",
+     "ssh_keys": ["ssh-ed25519 ..."], "vars": {"freezy_transit_candidates": [...]}}
+
+role     external: outside card on the venue's network, inside card on the transit network.
+         internal: outside card on the transit network, inside card on the admin network.
+vars     settings from the field server's /etc/freezy-net/vars.yaml, handed to the playbook.
+
+This script finds the two cards by MAC address, installs the ssh keys for root, sets the host name,
+and runs jump_vm.yaml against this machine. It runs at every boot, and the playbook changes only what
+differs, so a changed setting on the field server arrives at the machine's next start.
+
+A machine started with no credential is left alone.
+"""
+import json
+import os
+import subprocess
+import sys
+
+PLAYBOOK = "/usr/share/freezy-jump/ansible/jump_vm.yaml"
+VARS_OUT = "/run/freezy-jump/vars.json"
+ROLES = ("external", "internal")
+
+
+def interfaces(sys_net="/sys/class/net"):
+    """MAC address to interface name, for every card that has one."""
+    found = {}
+    for name in sorted(os.listdir(sys_net)):
+        try:
+            with open(os.path.join(sys_net, name, "address")) as handle:
+                mac = handle.read().strip().lower()
+        except OSError:
+            continue
+        if mac and mac != "00:00:00:00:00:00":
+            found.setdefault(mac, name)
+    return found
+
+
+def playbook_vars(cfg, cards):
+    """The playbook's variables for this machine. Raises ValueError for a role this image does not
+    know or a card that is not in the machine."""
+    role = cfg.get("role")
+    if role not in ROLES:
+        raise ValueError("unknown role %r; this image knows %s" % (role, " and ".join(ROLES)))
+    names = {}
+    for side in ("outside", "inside"):
+        mac = str(cfg.get(side + "_mac", "")).lower()
+        if mac not in cards:
+            raise ValueError("no network card with the %s address %s in this machine" % (side, mac or "(none given)"))
+        names[side] = cards[mac]
+    if names["outside"] == names["inside"]:
+        raise ValueError("the outside and inside cards are the same card")
+    out = dict(cfg.get("vars") or {})
+    out.update({
+        "freezy_jump_role": role,
+        "freezy_jump_outside": {"ifname": names["outside"], "connection": "external"},
+        "freezy_jump_inside": {"ifname": names["inside"], "connection": "internal"},
+        # The image already holds the scripts and units, and /usr is read-only.
+        "freezy_jump_files_installed": True,
+    })
+    return out
+
+
+def install_keys(keys, home="/root"):
+    folder = os.path.join(home, ".ssh")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    path = os.path.join(folder, "authorized_keys")
+    text = "".join(k.strip() + "\n" for k in keys if k.strip())
+    try:
+        with open(path) as handle:
+            if handle.read() == text:
+                return
+    except FileNotFoundError:
+        pass
+    with open(path + ".new", "w") as handle:
+        handle.write(text)
+    os.chmod(path + ".new", 0o600)
+    os.replace(path + ".new", path)
+
+
+def main():
+    path = os.path.join(os.environ.get("CREDENTIALS_DIRECTORY", ""), "freezy.jump")
+    if not os.path.isfile(path):
+        print("freezy-jump-role: the field server gave this machine no role; nothing to do")
+        return 0
+    with open(path) as handle:
+        cfg = json.load(handle)
+    variables = playbook_vars(cfg, interfaces())
+    if "ssh_keys" in cfg:
+        install_keys(cfg["ssh_keys"])
+    if cfg.get("name"):
+        subprocess.run(["hostnamectl", "hostname", cfg["name"]], check=True)
+    os.makedirs(os.path.dirname(VARS_OUT), exist_ok=True)
+    with open(VARS_OUT, "w") as handle:
+        json.dump(variables, handle)
+    print("freezy-jump-role: %s, outside %s, inside %s" % (
+        cfg["role"], variables["freezy_jump_outside"]["ifname"], variables["freezy_jump_inside"]["ifname"]))
+    sys.stdout.flush()
+    return subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", PLAYBOOK,
+                           "-e", "@" + VARS_OUT]).returncode
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (ValueError, OSError, subprocess.CalledProcessError) as err:
+        print("freezy-jump-role: %s" % err, file=sys.stderr)
+        sys.exit(1)
