@@ -1,7 +1,7 @@
 # The field server as an image
 
-**Proposed.** 2026-11-23. Nothing here is built yet beyond the draft already in
-this folder and the two fixes named below.
+**Accepted.** 2026-11-24. Built so far: the draft already in this folder and
+the two fixes named below.
 
 This settles how a field server is installed, updated and rebuilt as one
 Fedora image mode (bootc) image, so that someone other than me can stand one up.
@@ -34,8 +34,8 @@ things are missing:
 - **Its README is missing.** The `Containerfile` points at
   `deploy/image/README.md`.
 
-The first two are fixed in their own pull request, "Make the field-server image
-boot to a working arena". With it, an image installed to an empty disk answers
+The first two are fixed ("Make the field-server image boot to a working
+arena"). With those fixes, an image installed to an empty disk answers
 on 8080 about 30 seconds after power-on.
 
 ## Where each thing lives
@@ -57,7 +57,7 @@ reinstall).
 | Team addresses and Kea's config for the current match | written per match by the helper | runtime, rebuilt from the last request at boot |
 | The event database, its backups, match logs, uploaded logos | the named volume `freezy-arena-data` in `cheesy`'s home | kept data |
 | Kea leases, the last network request | `/var/lib/freezy-net` | kept data |
-| Jump machine disks and definitions | made by hand, outside the repo | kept data, made at first boot |
+| Jump machine disks and definitions | made by hand, outside the repo | kept data, copied from the image when a machine is first turned on |
 | Secrets (switch, access point and admin passwords) | in the event database | kept data, with the database |
 
 ## Kept storage
@@ -78,8 +78,9 @@ it does not survive is a reinstall. So:
   partition alone and makes it when it is missing. The standalone path does
   this in its own kickstart. The fleet manager path needs the manager to learn
   it (see "Two ways to deploy").
-- **Backups leave the box.** Today the arena backs its database up only to its
-  own data folder, and I download a copy by hand. A timer in the image copies
+- **Backups of the event database leave the box.** Today the arena backs its
+  database up only to its own data folder, on the same disk, so a dead disk
+  loses the event. I download a copy by hand. A timer in the image copies
   `arena/db/backups` to a place the server's settings name (a USB disk by
   label, or an rsync target). It is off until that setting is filled in.
 
@@ -89,9 +90,12 @@ The draft gives `cheesy` uid 1001, and the uid is in three places: `sysusers.d`,
 the Quadlet folder `/etc/containers/systemd/users/1001`, and the subuid files.
 The fleet site I'll deploy this through already has a person at 1001.
 
-I'll move `cheesy` to one fixed uid well away from where sites number their
-people, as one build argument that fills all three places. An existing server's
-data is re-owned once at cutover.
+`cheesy` moves to one fixed uid, 880, set by one build argument that fills all
+three places. 880 is free in the base image, sits below the range systemd hands
+out on its own (it counts down from 999) and is well away from where sites
+number their people. The build fails if the base already uses it. The number
+stays fixed, not picked at boot, because the kept partition holds files it
+owns. An existing server's data is re-owned once at cutover.
 
 The account stays what it is today: no sudo rule, and the only thing it can ask
 of root is six team numbers through the spool folder (`DESIGN.md`, "No sudo
@@ -118,27 +122,52 @@ rule for the arena user").
   expectation, not a tested fact. The work below adds a test, and until it
   passes the how-to says to take a backup before every update.
 
-## Jump machines
+## Jump machines and who routes the admin network
 
-A jump machine is a small virtual machine on the field server that gives a way
-in from outside the field network. `deploy/host/NETWORK.md` describes the
-layout.
+Two problems sit between a venue and a field. The venue's subnets can overlap
+the field's, and the admin network (FMS and field gear) needs a gateway and
+DNS. `deploy/host/NETWORK.md` maps the layout. A server answers each with one
+setting in `/etc/freezy-net/vars.yaml`:
 
-- **The external jump machine is on by default.** It has one card on the
-  venue's network and one on the transit link to the field server, takes ssh
-  only, and is the way I reach a server at an event.
-- **An internal jump machine is an option.** It sits between the transit link
-  and the admin network and acts as that network's gateway and DNS, for a site
-  whose field network has no router of its own. Off by default.
-- **Both come from one list.** `freezy_jump_vms` in the server's settings is
-  already a list (`deploy/host/ansible/vars.yaml:18`), with one entry today. A
-  site sets it to no entries, one, or both. Each entry names its role
-  (`external` or `internal`) and the VLAN interfaces its cards attach to.
-- **The image creates them.** Today the machine is made by hand and only its
-  inside is configured by a playbook (`deploy/jump/`, `jump_vm.yaml`). At first
-  boot the image will define each listed machine and make its disk on the kept
-  partition from a disk image carried in the server's image, so this too works
-  with no network. A machine that already exists is left alone.
+- **`freezy_venue_isolation`, on by default.** The external jump machine. It
+  has one card on the venue VLAN and one on the transit VLAN, takes ssh only
+  from outside, translates addresses on the way out, and picks a transit
+  network that does not overlap the venue's. It is also the way in to the
+  field server.
+- **`freezy_admin_router`: `internal`, `gateway` or `none`.** Who is gateway
+  and DNS for the admin VLAN.
+  - `internal`, the default: the internal jump machine. It takes its outside
+    address from the transit network, holds the gateway address on the admin
+    VLAN, translates addresses out, answers DNS and hands out addresses over a
+    range the settings name.
+  - `gateway`: a hardware router does that job, as on my field.
+  - `none`: a router in bridge mode. Rare.
+
+| Venue isolation | Admin router | What you get |
+|---|---|---|
+| on | `internal` | The default. Needs only switches that carry tagged VLANs, of any brand |
+| on | `gateway` | The router takes its outside address from the transit network |
+| off | `internal` | A field on its own, with no venue link |
+| off | `gateway` | A field on its own; the router does everything |
+| off | `none` | Nothing here routes the admin network |
+| on | `none` | The admin network has no way out. Allowed, with a warning |
+
+- **The settings stay and can change at any time.** `freezy-jump` writes a
+  setting and applies it, and the same step runs at every boot. Turning a
+  machine on defines it, gives it a disk if it has none, and starts it. Turning
+  it off stops it and keeps its disk.
+- **One disk image serves both roles.** It is built with this repository,
+  carried inside the server's image already installed, and copied to the kept
+  partition the first time a machine is turned on. So this works with no
+  network. The machine is told its role when it starts.
+- **The internal machine will not fight a router.** Before it takes the
+  gateway address it checks that nothing already answers there, and refuses if
+  something does.
+- **VLAN numbers come from the settings.** Each machine attaches to whatever
+  the venue, transit and admin VLANs are set to (`freezy_uplink_vlans`).
+- **Team VLANs are not part of this.** The field server stays gateway, DHCP
+  server and filter for the six team VLANs in every row of the table. Other
+  VLANs a site's router carries, such as switch management, are the site's.
 - **Keys, not passwords.** A jump machine takes the ssh keys the site put in
   its image.
 
@@ -179,28 +208,29 @@ the plan beside it cover that work. The standalone path does not wait for it.
 - **CI builds the image** and runs `bootc container lint`, which the
   `Containerfile` already ends with.
 
-## Decisions I still owe
+## Decided on 2026-11-24
 
-1. **The `cheesy` uid.** Which number.
-2. **How a jump machine's disk gets into the image.** Carried as a disk image
-   (bigger server image, no network needed), or built at first boot from a
-   container (smaller, needs a registry).
-3. **Where backups go by default.** A labelled USB disk is the simplest thing
-   to explain in a how-to.
-4. **Whether the internal jump machine's setup comes back into this
-   repository.** Only the external one's is here now.
+1. **The `cheesy` uid** is 880, fixed at build.
+2. **A jump machine's disk** is carried in the server's image, already
+   installed.
+3. **One jump disk image serves both roles**, and the two settings above
+   choose what runs. The default is venue isolation on and the internal
+   machine as the admin router.
+4. **Backups** are of the event database. The timer is off until a server's
+   settings name where they go.
 
 ## The work, in order
 
 1. Make the draft boot to a working arena: the missing `freezy-firewalld-zones`
    and the missing time zone link, each with a test. In review.
 2. CI: build the image, lint it, run the deployment tests.
-3. One uid for `cheesy` from a build argument.
+3. One uid for `cheesy`, 880, from a build argument.
 4. The data partition: the mount, the arena's data folder bound from it, Kea's
    leases and the last request moved onto it, and a one-time move for a server
    that has the old locations.
 5. The boot check and the no-update-during-a-match hold.
-6. Jump machines made at first boot from the list; the internal role.
+6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
+   internal role.
 7. The backup timer.
 8. A test that an older arena opens a newer database.
 9. The standalone installer: the kickstart and the ISO step.
