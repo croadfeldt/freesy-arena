@@ -16,3 +16,29 @@ jobs:
         run: go test ./...
       # - name: Check formatting
       #  run: test -z "$(go fmt ./...)"
+
+  # The deployment's own tests: the host network helper, the update script, the image's install list
+  # and the jump machine's scripts. Every deploy/**/test_*.py runs, so a new test file needs no change
+  # here. The team VLAN filter test builds its own network namespaces and sends real packets.
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Install what the tests use
+        run: sudo apt-get update && sudo apt-get install -y nftables iproute2 iputils-ping python3-yaml
+      - name: Python tests
+        run: |
+          status=0
+          for t in $(find deploy -name 'test_*.py' | sort); do
+            echo "::group::$t"
+            python3 -m unittest -v "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+      # The test runs unprivileged in its own user namespace, as it does on a developer's machine.
+      # Ubuntu's runners switch that off for unconfined programs; turn it back on for this job.
+      - name: Team VLAN filter test
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          deploy/host/test_freezy_firewall.sh

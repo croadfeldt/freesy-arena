@@ -1,4 +1,4 @@
-# Build the arena and Kea container images. A pull request only builds them, so a broken build shows up
+# Build the arena and Kea container images and the field-server image. A pull request only builds them, so a broken build shows up
 # before the merge. A merge into the branch below also pushes them to quay.io, where the field server's
 # update script (deploy/freezy-update) pulls the arena image from.
 #
@@ -25,8 +25,15 @@ jobs:
           - name: freezy-kea
             containerfile: ./deploy/kea/Containerfile
             context: ./deploy/kea
+          # The whole field server as one image (deploy/image/DESIGN.md). Built on every pull request,
+          # which also runs `bootc container lint`, the last step of its Containerfile. Not pushed
+          # yet: set push to true here once its repository exists on quay.io.
+          - name: freezy-field-server
+            containerfile: ./deploy/image/Containerfile
+            context: .
+            push: false
     env:
-      PUSH: ${{ github.event_name == 'push' && vars.QUAY_NAMESPACE != '' }}
+      PUSH: ${{ github.event_name == 'push' && vars.QUAY_NAMESPACE != '' && matrix.push != false }}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
