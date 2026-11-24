@@ -1,0 +1,118 @@
+#!/usr/bin/python3
+"""Make the internal jump machine the admin network's gateway, DNS server and DHCP server.
+
+The internal jump machine stands where a hardware router would: its outside card is on the transit
+network and its inside card on the admin network (FMS and field equipment). This script puts the
+gateway address on the inside card and points dnsmasq (freezy-admin-dhcp.service) at it, to answer DNS
+and hand out addresses from the range in the settings.
+
+It will not fight a router. Before it takes the gateway address for the first time it asks the admin
+network whether something already answers there. If something does, it leaves the card without an
+address and fails, because two gateways on one address break the field in ways that are slow to find.
+The setting to change is freezy_admin_router on the field server.
+
+Run at boot (freezy-admin-router.service) and by jump_vm.yaml. Settings: /etc/freezy-jump/admin.json.
+"""
+import ipaddress
+import json
+import subprocess
+import sys
+
+CONFIG = "/etc/freezy-jump/admin.json"
+DHCP_CONFIG = "/etc/freezy-jump/admin-dnsmasq.conf"
+DHCP_RESTART = ["systemctl", "restart", "freezy-admin-dhcp.service"]
+
+
+def plan(cfg):
+    """Check the settings against each other and return the addresses to use. Raises ValueError when
+    the range is outside the network, runs backwards, or would hand out the gateway's own address or
+    one of the addresses the settings reserve (the field server's, for one)."""
+    gateway = ipaddress.ip_interface(cfg["address"])
+    network = gateway.network
+    first = ipaddress.ip_address(cfg["dhcp_first"])
+    last = ipaddress.ip_address(cfg["dhcp_last"])
+    if first not in network or last not in network:
+        raise ValueError("the DHCP range %s to %s is not inside the admin network %s" % (first, last, network))
+    if first > last:
+        raise ValueError("the DHCP range runs backwards: %s to %s" % (first, last))
+    for name, value in [("the gateway", gateway.ip)] + [
+            ("reserved address", ipaddress.ip_address(a)) for a in cfg.get("reserved", [])]:
+        if first <= value <= last:
+            raise ValueError("the DHCP range %s to %s includes %s %s" % (first, last, name, value))
+    return {"address": str(gateway), "gateway": str(gateway.ip), "netmask": str(network.netmask),
+            "first": str(first), "last": str(last)}
+
+
+def dhcp_config(cfg, addresses):
+    """dnsmasq's settings: DNS and DHCP on the inside card only. Names are looked up through the
+    machine's own resolver, so they follow whatever the transit side hands out."""
+    return "".join(line + "\n" for line in [
+        "# Written by freezy-admin-router. Do not edit.",
+        "interface=%s" % cfg["inside_interface"],
+        "except-interface=lo",
+        "bind-dynamic",
+        "dhcp-authoritative",
+        "dhcp-range=%s,%s,%s,%s" % (addresses["first"], addresses["last"], addresses["netmask"],
+                                    cfg.get("lease_time", "12h")),
+        "dhcp-option=option:router,%s" % addresses["gateway"],
+        "dhcp-option=option:dns-server,%s" % addresses["gateway"],
+        "dhcp-leasefile=/var/lib/freezy-jump/admin-dnsmasq.leases",
+    ])
+
+
+def run(*cmd):
+    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+
+
+def answered(ifname, address):
+    """True if something on the network already holds the address (duplicate address detection).
+    arping -D exits 0 when nobody answered and 1 when somebody did."""
+    result = subprocess.run(["arping", "-D", "-q", "-c", "3", "-w", "4", "-I", ifname, address])
+    if result.returncode not in (0, 1):
+        raise OSError("arping could not check %s on %s (exit %d)" % (address, ifname, result.returncode))
+    return result.returncode == 1
+
+
+def main(argv):
+    if len(argv) != 1:
+        print("usage: freezy-admin-router", file=sys.stderr)
+        return 2
+    with open(CONFIG) as handle:
+        cfg = json.load(handle)
+    addresses = plan(cfg)
+    wanted_config = dhcp_config(cfg, addresses)
+    try:
+        with open(DHCP_CONFIG) as handle:
+            config_ok = handle.read() == wanted_config
+    except FileNotFoundError:
+        config_ok = False
+
+    now = run("nmcli", "-g", "ipv4.method,ipv4.addresses", "connection", "show",
+              cfg["inside_connection"]).splitlines() + ["", ""]
+    mine = now[0] == "manual" and now[1] == addresses["address"]
+    if mine and config_ok:
+        print("freezy-admin-router: gateway %s is in place; nothing changed" % addresses["address"])
+        return 0
+    if not mine and answered(cfg["inside_interface"], addresses["gateway"]):
+        print("freezy-admin-router: something on the admin network already answers at %s. Not taking "
+              "the address. If a router is the admin network's gateway, set freezy_admin_router to "
+              "gateway on the field server." % addresses["gateway"], file=sys.stderr)
+        return 1
+
+    with open(DHCP_CONFIG, "w") as handle:
+        handle.write(wanted_config)
+    run("nmcli", "connection", "modify", cfg["inside_connection"], "ipv4.method", "manual",
+        "ipv4.addresses", addresses["address"], "ipv4.gateway", "", "ipv4.dns", "", "ipv4.never-default", "yes")
+    run("nmcli", "connection", "up", cfg["inside_connection"])
+    run(*cfg.get("dhcp_restart_command", DHCP_RESTART))
+    print("freezy-admin-router: gateway and DNS for the admin network at %s; handing out %s to %s"
+          % (addresses["address"], addresses["first"], addresses["last"]))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except (ValueError, KeyError, subprocess.CalledProcessError, OSError) as err:
+        print("freezy-admin-router: %s" % err, file=sys.stderr)
+        sys.exit(1)

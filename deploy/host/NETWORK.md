@@ -77,6 +77,25 @@ Built by `ansible/jump_vm.yaml`.
 
 It also runs `dnscrypt-proxy` on its inside address, which the playbook does not configure yet.
 
+### The internal role
+
+The same playbook, with `freezy_jump_role: internal`, sets a second machine up in the place of the
+UniFi gateway, for a field with no router of its own.
+
+| | |
+|---|---|
+| Outside card, transit VLAN | address by DHCP from the external jump machine; accepts ssh only |
+| Inside card, admin VLAN | the admin network's gateway address (`freezy_fms_gateway`); accepts ssh, DNS and DHCP; answers DNS and hands out `freezy_admin_dhcp_first` to `freezy_admin_dhcp_last` |
+| Passing through | inside to outside only, address translated; nothing forwarded inward |
+
+Before it takes the gateway address for the first time, `freezy-admin-router` asks the admin network
+whether something already answers there. If something does, it takes no address and fails, so it
+never runs beside a router that holds the same address.
+
+`deploy/jump/Containerfile` builds one image that serves both roles, and `deploy/jump/build-disk`
+turns it into a disk image. A machine started from that disk is told its role by the field server
+and runs the playbook on itself at every boot.
+
 ### How the transit network is chosen
 
 The transit network must not overlap the venue's, or the jump machine could not tell them apart.

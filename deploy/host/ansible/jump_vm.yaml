@@ -1,15 +1,25 @@
-# The settings inside the jump virtual machine (see ../NETWORK.md). Run it against the machine:
+# The settings inside a jump virtual machine (see ../NETWORK.md). Run it against the machine:
 #
 #   ansible-playbook -i <machine>, -u root deploy/host/ansible/jump_vm.yaml
 #
-# It sets:
-#   - the outside card (the venue's network): address from the venue by DHCP, in the firewall's
-#     `external` zone, which accepts only ssh and translates the address of everything leaving;
-#   - the inside card (the transit network, the UniFi gateway's "internet"): in the `internal` zone,
-#     which accepts ssh, DNS and DHCP. Its network is chosen by freezy-transit-select so that it never
-#     overlaps the venue's, and it hands out addresses by DHCP. If the venue gives no address within
-#     two minutes, it settles on a network anyway, so the field works with no venue network;
-#   - forwarding on, so the inside network can get out. Nothing is forwarded inward.
+# A machine built from deploy/jump/Containerfile runs it on itself at every boot (freezy-jump-role).
+#
+# freezy_jump_role picks what the machine is:
+#
+#   external  between the venue and the transit network. Its inside network is chosen by
+#             freezy-transit-select so that it never overlaps the venue's, and it hands out addresses
+#             by DHCP. If the venue gives no address within two minutes, it settles on a network
+#             anyway, so the field works with no venue network.
+#   internal  between the transit network and the admin network, in the place of a hardware router.
+#             It holds the admin network's gateway address and answers DNS and DHCP there
+#             (freezy-admin-router). It refuses if something already answers at that address.
+#
+# For both it sets:
+#   - the outside card: address by DHCP, in the firewall's `external` zone, which accepts only ssh
+#     and translates the address of everything leaving;
+#   - the inside card: in the `internal` zone, which accepts ssh, DNS and DHCP;
+#   - forwarding on and a firewall policy from the inside zone to the outside zone, so the inside
+#     network can get out. Nothing is forwarded inward.
 #
 # It needs NetworkManager, firewalld and dnsmasq on the machine and installs no packages. A setting
 # that is already right is not touched, so running it over a working machine does not interrupt the
@@ -68,9 +78,25 @@
       loop_control:
         label: "{{ item.zone }}"
 
+    # A zone's address translation does not by itself let traffic cross from one zone to another:
+    # firewalld refuses that unless a policy allows it. This is the one crossing allowed, inside to
+    # outside. Nothing allows outside to inside.
+    - name: Let the inside network out through the outside card
+      ansible.builtin.shell: |
+        p=freezy-out; changed=
+        firewall-cmd --permanent --get-policies | tr ' ' '\n' | grep -qx $p || { firewall-cmd -q --permanent --new-policy $p; changed=1; }
+        [ "$(firewall-cmd --permanent --policy $p --get-target)" = ACCEPT ] || { firewall-cmd -q --permanent --policy $p --set-target ACCEPT; changed=1; }
+        firewall-cmd -q --permanent --policy $p --query-ingress-zone internal || { firewall-cmd -q --permanent --policy $p --add-ingress-zone internal; changed=1; }
+        firewall-cmd -q --permanent --policy $p --query-egress-zone external || { firewall-cmd -q --permanent --policy $p --add-egress-zone external; changed=1; }
+        [ "$(firewall-cmd --permanent --policy $p --list-ingress-zones)" = internal ] || { echo "policy $p has other ingress zones" >&2; exit 1; }
+        [ "$(firewall-cmd --permanent --policy $p --list-egress-zones)" = external ] || { echo "policy $p has other egress zones" >&2; exit 1; }
+        [ -z "$changed" ] || echo changed
+      register: freezy_policy
+      changed_when: "'changed' in freezy_policy.stdout"
+
     - name: Load the firewall changes
       ansible.builtin.command: firewall-cmd --reload
-      when: freezy_zone.changed
+      when: freezy_zone.changed or freezy_policy.changed
 
     - name: Turn forwarding on, now and at every boot
       ansible.builtin.shell: |
@@ -90,12 +116,24 @@
     - name: Create the connections that are missing
       ansible.builtin.command: >-
         nmcli connection add type ethernet con-name {{ item.connection }} ifname {{ item.ifname }}
-        connection.autoconnect yes connection.zone {{ item.zone }} ipv6.method disabled
+        connection.autoconnect yes connection.autoconnect-priority 10
+        connection.zone {{ item.zone }} ipv6.method disabled
         ipv4.method {{ 'auto' if item.method == 'auto' else 'disabled' }}
       when: item.connection not in freezy_connections.stdout_lines
+      register: freezy_created
       loop: "{{ freezy_cards }}"
       loop_control:
         label: "{{ item.connection }}"
+
+    # A new machine's cards come up on NetworkManager's own automatic connections, which are in no
+    # zone of ours. Switch each card to the connection just made for it. The priority above keeps it
+    # that way at the next boot.
+    - name: Put each card on the connection just created for it
+      ansible.builtin.command: nmcli connection up {{ item.item.connection }}
+      when: item.changed
+      loop: "{{ freezy_created.results }}"
+      loop_control:
+        label: "{{ item.item.connection }}"
 
     - name: Read the connections that exist
       ansible.builtin.command: >-
@@ -123,8 +161,6 @@
       loop_control:
         label: "{{ item.item.connection }}"
 
-    # ---- Choosing and serving the transit network. ----
-
     - name: Create the directories
       ansible.builtin.file:
         path: "{{ item }}"
@@ -132,7 +168,15 @@
         mode: "0755"
       loop: [/etc/freezy-jump, /var/lib/freezy-jump]
 
+    - name: Check the role is one this playbook knows
+      ansible.builtin.assert:
+        that: freezy_jump_role in ['external', 'internal']
+        fail_msg: "freezy_jump_role is {{ freezy_jump_role }}; it must be external or internal"
+
+    # ---- External: choosing and serving the transit network. ----
+
     - name: Write the transit settings
+      when: freezy_jump_role == 'external'
       ansible.builtin.copy:
         content: "{{ freezy_transit_settings | to_nice_json }}\n"
         dest: /etc/freezy-jump/transit.json
@@ -145,6 +189,7 @@
           lease_time: "{{ freezy_transit_lease_time }}"
           dhcp_restart_command: "{{ freezy_transit_dhcp_restart }}"
           candidates: "{{ freezy_transit_candidates }}"
+          dns: "{{ freezy_transit_dns }}"
           field_server_client_id: "{{ freezy_transit_client_id }}"
 
     - name: Install the transit network chooser and its trigger
@@ -161,8 +206,12 @@
         - { src: freezy-transit-dhcp.service, dest: /etc/systemd/system/freezy-transit-dhcp.service, mode: "0644" }
       loop_control:
         label: "{{ item.dest }}"
+      when: freezy_jump_role == 'external' and not freezy_jump_files_installed
 
+    # A machine built from the image runs this playbook at every boot, which makes the choice, and its
+    # image already starts the DHCP server.
     - name: Have the choice made, and DHCP served, at every boot
+      when: freezy_jump_role == 'external' and not freezy_jump_files_installed
       ansible.builtin.systemd:
         name: "{{ item }}"
         enabled: true
@@ -172,13 +221,78 @@
 
     # Waits for the venue's address like the boot-time run does, then settles either way.
     - name: Choose the transit network for this venue
+      when: freezy_jump_role == 'external'
       ansible.builtin.command: /usr/local/sbin/freezy-transit-select --wait {{ freezy_transit_wait_seconds }}
       register: freezy_transit
       changed_when: "'nothing changed' not in freezy_transit.stdout"
 
     - name: Report the choice
+      when: freezy_jump_role == 'external'
       ansible.builtin.debug:
         msg: "{{ freezy_transit.stdout }}"
+
+    # ---- Internal: gateway, DNS and DHCP for the admin network. ----
+
+    - name: Write the admin network settings
+      when: freezy_jump_role == 'internal'
+      ansible.builtin.copy:
+        content: "{{ freezy_admin_settings | to_nice_json }}\n"
+        dest: /etc/freezy-jump/admin.json
+        mode: "0644"
+      vars:
+        freezy_admin_settings:
+          inside_connection: "{{ freezy_jump_inside.connection }}"
+          inside_interface: "{{ freezy_jump_inside.ifname }}"
+          address: "{{ freezy_fms_gateway }}/{{ freezy_fms_network.split('/')[1] }}"
+          dhcp_first: "{{ freezy_admin_dhcp_first }}"
+          dhcp_last: "{{ freezy_admin_dhcp_last }}"
+          lease_time: "{{ freezy_admin_dhcp_lease_time }}"
+          reserved: ["{{ freezy_fms_address }}"]
+
+    - name: Install the admin network's gateway script and its units
+      ansible.builtin.copy:
+        src: "{{ freezy_jump_src }}/{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - { src: freezy-admin-router, dest: /usr/local/sbin/freezy-admin-router }
+        - { src: freezy-admin-router.service, dest: /etc/systemd/system/freezy-admin-router.service, mode: "0644" }
+        - { src: freezy-admin-dhcp.service, dest: /etc/systemd/system/freezy-admin-dhcp.service, mode: "0644" }
+      loop_control:
+        label: "{{ item.dest }}"
+      when: freezy_jump_role == 'internal' and not freezy_jump_files_installed
+
+    - name: Have the gateway address checked, and DNS and DHCP served, at every boot
+      when: freezy_jump_role == 'internal' and not freezy_jump_files_installed
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop: [freezy-admin-router.service, freezy-admin-dhcp.service]
+      tags: systemd
+
+    # Fails, and takes no address, if something on the admin network already answers there.
+    - name: Take the admin network's gateway address
+      when: freezy_jump_role == 'internal'
+      ansible.builtin.command: /usr/local/sbin/freezy-admin-router
+      register: freezy_admin
+      changed_when: "'nothing changed' not in freezy_admin.stdout"
+
+    - name: Report the admin network
+      when: freezy_jump_role == 'internal'
+      ansible.builtin.debug:
+        msg: "{{ freezy_admin.stdout }}"
+
+    # The chooser and the gateway script restart the DHCP server only when they change something.
+    # Starting it here, after the inside card has its address, covers every other boot. Started before
+    # the card exists, dnsmasq runs but does not listen on it.
+    - name: Start the DHCP server if it is not running
+      ansible.builtin.systemd:
+        name: "{{ 'freezy-transit-dhcp' if freezy_jump_role == 'external' else 'freezy-admin-dhcp' }}.service"
+        state: started
+      tags: systemd
 
     # ---- Prove it on the running machine. NetworkManager puts cards in their zones a moment after
     # the command returns; hence the retries. ----

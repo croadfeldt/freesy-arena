@@ -4,6 +4,8 @@
 Description=Choose the Freezy Arena transit network
 After=NetworkManager.service
 Wants=NetworkManager.service
+# Only on a machine set up for the external role.
+ConditionPathExists=/etc/freezy-jump/transit.json
 
 [Service]
 Type=oneshot

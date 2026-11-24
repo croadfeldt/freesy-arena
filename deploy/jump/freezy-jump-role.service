@@ -1,0 +1,21 @@
+# Set this jump machine up for the role the field server gave it (the freezy.jump credential).
+#
+# In the image this is the only unit of ours started at boot. The playbook it runs makes the checks
+# freezy-transit.service and freezy-admin-router.service make on a machine set up by hand, and starts
+# the DHCP unit. Do not order those units against this one: the playbook restarts the DHCP units,
+# which wait for them, and they would be waiting for this.
+[Unit]
+Description=Set up the Freezy Arena jump machine for its role
+After=NetworkManager.service firewalld.service
+Wants=NetworkManager.service firewalld.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ImportCredential=freezy.jump
+Environment=ANSIBLE_LOCAL_TEMP=/run/freezy-jump/ansible ANSIBLE_REMOTE_TEMP=/run/freezy-jump/ansible HOME=/root
+ExecStart=/usr/local/sbin/freezy-jump-role
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

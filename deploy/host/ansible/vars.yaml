@@ -76,6 +76,21 @@ freezy_kea_config: /etc/freezy-net/kea/kea-dhcp4.conf
 freezy_kea_service: freezy-kea.service
 freezy_kea_image: localhost/freezy-kea:latest
 
+# Which jump machine jump_vm.yaml is setting up: external (venue to transit) or internal (transit to
+# admin, in the place of a hardware router). A machine built from deploy/jump/Containerfile is told
+# its role by the field server.
+freezy_jump_role: external
+# True on a machine built from deploy/jump/Containerfile, which already holds the scripts and units.
+freezy_jump_files_installed: false
+# Whether the external jump machine also answers DNS on the transit network. False leaves port 53 to
+# something else on the machine.
+freezy_transit_dns: false
+# The addresses the internal jump machine hands out on the admin network. Keep the range clear of
+# the FMS address and of field equipment with fixed addresses.
+freezy_admin_dhcp_first: 10.0.100.100
+freezy_admin_dhcp_last: 10.0.100.199
+freezy_admin_dhcp_lease_time: 12h
+
 # Inside the jump virtual machine (jump_vm.yaml). `outside` is the card on the venue's network,
 # `inside` the card on the transit network. The interface names are the ones the machine uses today.
 freezy_jump_outside: { ifname: eth1, connection: external }

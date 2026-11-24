@@ -1,0 +1,16 @@
+# DNS and DHCP for the admin network, on the internal jump machine. freezy-admin-router writes its
+# settings and restarts it.
+[Unit]
+Description=DNS and DHCP for the Freezy Arena admin network
+After=NetworkManager.service freezy-admin-router.service
+ConditionPathExists=/etc/freezy-jump/admin-dnsmasq.conf
+StartLimitIntervalSec=0
+
+[Service]
+StateDirectory=freezy-jump
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/freezy-jump/admin-dnsmasq.conf
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

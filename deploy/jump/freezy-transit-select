@@ -65,11 +65,15 @@ def plan(network):
 
 
 def dhcp_config(cfg, addresses):
-    """The DHCP server's settings. port=0: DHCP only, the machine's DNS proxy keeps port 53. Short
-    leases, so the UniFi gateway follows within minutes if the network ever has to move."""
+    """The DHCP server's settings. Short leases, so the router on the transit network follows within
+    minutes if the network ever has to move.
+
+    With "dns" false or missing it is DHCP only (port=0) and something else on the machine keeps
+    port 53. With "dns" true it also answers DNS on the inside card, looking names up through the
+    machine's own resolver, so they follow whatever the venue hands out."""
     return "".join(line + "\n" for line in [
         "# Written by freezy-transit-select. Do not edit.",
-        "port=0",
+        "except-interface=lo" if cfg.get("dns") else "port=0",
         "interface=%s" % cfg["inside_interface"],
         "bind-dynamic",
         "dhcp-authoritative",
