@@ -86,9 +86,12 @@ class JumpMachinesTest(unittest.TestCase):
         self.assertIn('if [ -f "$images/freezy-jump.qcow2" ]', self.install)
 
     def test_the_folder_for_the_machines_disks_exists_at_boot(self):
-        with open(os.path.join(HERE, "files", "usr", "lib", "tmpfiles.d", "freezy-image.conf")) as handle:
-            made = [line.split()[1] for line in handle if line.startswith("d ")]
-        self.assertIn(self.constant("DISKS"), made)
+        # freezy-data makes the folders of the kept data, and freezy-jump runs after it.
+        with open(os.path.join(HERE, "freezy-data")) as handle:
+            step = handle.read()
+        root = re.search(r'^ROOT = "([^"]+)"', step, re.M).group(1)
+        folders = re.findall(r'\("(\w+)", [\w"]+, 0o\d+\)', step)
+        self.assertIn(self.constant("DISKS"), [f"{root}/{name}" for name in folders])
 
     def test_the_settings_file_the_command_reads_is_the_one_the_image_installs(self):
         # install.sh copies deploy/host/ansible to /usr/share/freezy-net.
