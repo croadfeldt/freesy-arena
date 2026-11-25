@@ -9,11 +9,17 @@ jobs:
         with:
           go-version: 1.26.x
       - name: Check out code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          # The whole history: the older-arena check below builds an earlier commit.
+          fetch-depth: 0
       - name: Build
         run: go build
       - name: Test
         run: go test ./...
+      # A rollback of the field server leaves the older arena with the newer database.
+      - name: An older arena opens this arena's database
+        run: deploy/image/test_older_arena.sh
       # - name: Check formatting
       #  run: test -z "$(go fmt ./...)"
 

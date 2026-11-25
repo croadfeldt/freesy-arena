@@ -154,10 +154,18 @@ rule for the arena user").
   build on an image-mode server without rebuilding the image. Its kept
   versions and `--rollback` are unchanged.
 - **Rolling back across a database change.** The database is bbolt with JSON
-  records and no migration step (`model/database.go`), so I expect an older
-  arena to open a newer database and ignore fields it does not know. That is an
-  expectation, not a tested fact. The work below adds a test, and until it
-  passes the how-to says to take a backup before every update.
+  records and no migration step (`model/database.go`). An older arena opens a
+  newer database and ignores what it does not know. Two tests hold that:
+  - `model/older_arena_test.go` adds an unknown field to every record and an
+    unknown table, and reads every table. It runs with `go test`.
+  - `deploy/image/test_older_arena.sh` has this arena write an event and the
+    arena from before the last change to the stored records read every table
+    and start on it. CI runs it.
+- **What a rollback costs.** A record the older arena saves loses the fields
+  only the newer arena knows; one it only reads keeps them. A field whose type
+  changed, or a change in what a value means, is not covered: the script
+  catches the first when it happens, nothing catches the second. So the how-to
+  still says to take a backup before an update.
 
 ## Jump machines and who routes the admin network
 
