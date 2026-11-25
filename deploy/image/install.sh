@@ -98,6 +98,8 @@ date -u +%Y%m%d%H%M%S-$RANDOM > /usr/share/freezy-images/stamp
 # without it runs, and `freezy-jump` says the disk is missing when asked to start a machine.
 if [ -f "$images/freezy-jump.qcow2" ]; then
     install -m 0644 "$images/freezy-jump.qcow2" /usr/share/freezy-images/freezy-jump.qcow2
+    # Which disk this is, so a server updated to this image gives its jump machines the new one.
+    sha256sum < "$images/freezy-jump.qcow2" | cut -d' ' -f1 > /usr/share/freezy-images/freezy-jump.qcow2.id
 else
     echo "install.sh: no freezy-jump.qcow2 given; this image cannot start jump machines" >&2
 fi

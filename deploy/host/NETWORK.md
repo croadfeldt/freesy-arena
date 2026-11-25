@@ -128,6 +128,10 @@ freezy-jump restart                          # restart the machines that should 
   has none, defines it, and starts it. Its cards attach to the VLAN interfaces named `venue`,
   `transit` and `admin` in `freezy_uplink_vlans`, whatever their VLAN numbers are.
 - **Turning it off** shuts it down and removes its definition. Its disk stays.
+- **An update of the field server replaces the machines' disks** when the new image carries a newer
+  jump disk. Don't keep anything on a jump machine. Its settings come from the field server at every
+  start, and so does its ssh host key (kept in `/var/lib/freezy/vm`), so ssh sees the same machine
+  afterwards.
 - **The same step runs at every boot** (`freezy-jump.service`), so the machines always match the
   settings.
 - **ssh keys** for both machines come from `/etc/freezy-net/jump_authorized_keys`, or from root's

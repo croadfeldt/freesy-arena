@@ -187,10 +187,16 @@ setting in `/etc/freezy-net/vars.yaml`:
   the gateway address it checks that nothing already answers there, and
   refuses if something does. `freezy-jump status` shows the refusal and
   `freezy-jump log internal` the reason.
-- **An update does not replace a machine's disk yet.** A machine keeps the
-  disk it was first given, so a newer jump image in an updated server reaches
-  it only when its disk is deleted and `freezy-jump apply` makes a new one.
-  Open: whether an update should do that by itself.
+- **An update replaces a machine's disk, and nothing else about it.** The
+  server's image says which jump disk it carries, and each machine's disk has
+  the one it was copied from noted beside it. When they differ, at the first
+  start after an update or a rollback, the machine is stopped and given the
+  disk the server now carries. Nothing is lost with the old disk:
+  - which machines run, their role and their settings come from the server's
+    `/etc/freezy-net/vars.yaml` at every start;
+  - each machine's ssh host key is made once on the server, kept beside its
+    disk on the kept partition, and handed to the machine at every start, so
+    ssh sees the same machine.
 - **VLAN numbers come from the settings.** Each machine attaches to whatever
   the venue, transit and admin VLANs are set to (`freezy_uplink_vlans`).
 - **Team VLANs are not part of this.** The field server stays gateway, DHCP
