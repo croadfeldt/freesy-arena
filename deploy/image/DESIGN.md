@@ -87,11 +87,24 @@ it does not survive is a reinstall. So:
   partition alone and makes it when it is missing. The standalone path does
   this in its own kickstart. The fleet manager path needs the manager to learn
   it (see "Two ways to deploy").
-- **Backups of the event database leave the box.** Today the arena backs its
-  database up only to its own data folder, on the same disk, so a dead disk
-  loses the event. I download a copy by hand. A timer in the image copies
-  `arena/db/backups` to a place the server's settings name (a USB disk by
-  label, or an rsync target). It is off until that setting is filled in.
+- **Backups of the event database leave the box.** The arena writes a copy of
+  its database to `arena/db/backups` after every committed match, on the same
+  disk as the database, so a dead disk loses the event. `freezy-backup` copies
+  that folder to the place `freezy_backup_target` in the server's settings
+  names, every five minutes (`freezy-backup.timer`):
+  - **Empty, the default:** nothing is copied.
+  - **`label:NAME`:** a disk whose filesystem has that label, a USB stick for
+    one. It is mounted for the copy and unmounted after, so it can be pulled
+    at any other moment. FAT and exFAT work.
+  - **Anything else:** an rsync destination.
+- **Nothing is deleted at the target**, so clearing or restoring the database
+  on the server leaves the copies.
+- **A copy that did not happen is a failed unit.** With a target set and the
+  disk gone, `freezy-backup.service` shows in `systemctl --failed`.
+  `freezy-backup --status` says when the last copy succeeded and whether the
+  newest backup has left the server.
+- **It copies during a match.** A backup is a few megabytes and the copy runs
+  at idle priority. The update hold does not apply to it.
 
 ## The `cheesy` account
 
@@ -251,8 +264,8 @@ the plan beside it cover that work. The standalone path does not wait for it.
 3. **One jump disk image serves both roles**, and the two settings above
    choose what runs. The default is venue isolation on and the internal
    machine as the admin router.
-4. **Backups** are of the event database. The timer is off until a server's
-   settings name where they go.
+4. **Backups** are of the event database. The timer copies nothing until a
+   server's settings name where they go.
 
 ## The work, in order
 
@@ -266,7 +279,7 @@ the plan beside it cover that work. The standalone path does not wait for it.
 5. The boot check and the no-update-during-a-match hold. Done.
 6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
    internal role. Done.
-7. The backup timer.
+7. The backup timer. Done.
 8. A test that an older arena opens a newer database.
 9. The standalone installer: the kickstart and the ISO step.
 10. The how-to, `deploy/image/README.md`: build, install, first boot, settings,

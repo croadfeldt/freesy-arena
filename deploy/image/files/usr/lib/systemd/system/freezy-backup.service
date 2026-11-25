@@ -1,0 +1,14 @@
+# Copies the arena's database backups off the field server (freezy-backup), to the place
+# freezy_backup_target in /etc/freezy-net/vars.yaml names. With no target it does nothing. It fails when
+# a target is set and the copy did not happen, so `systemctl --failed` shows a backup disk that is gone.
+[Unit]
+Description=Copy the Freezy Arena database backups off the field server
+After=freezy-data.service
+Requires=freezy-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/freezy-backup
+# A copy never competes with the arena for the processor or the disk.
+Nice=10
+IOSchedulingClass=idle

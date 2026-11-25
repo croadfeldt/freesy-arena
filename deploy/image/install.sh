@@ -56,6 +56,9 @@ install -D -m 0755 "$host/freezy-jump" /usr/libexec/freezy-jump
 install -D -m 0755 "$src/deploy/image/freezy-os-update" /usr/libexec/freezy-os-update
 install -D -m 0755 "$src/deploy/freezy-update" /usr/libexec/freezy-update
 ln -s ../libexec/freezy-os-update /usr/bin/freezy-os-update
+# Copies the arena's database backups off the server, when a server's settings say where to.
+install -D -m 0755 "$src/deploy/image/freezy-backup" /usr/libexec/freezy-backup
+ln -s ../libexec/freezy-backup /usr/bin/freezy-backup
 ln -s ../libexec/freezy-jump /usr/bin/freezy-jump
 install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" \
     "$host/freezy-jump.service" /usr/lib/systemd/system/
@@ -105,7 +108,7 @@ else
 fi
 
 # Nothing shipped may be group- or world-writable.
-chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-data /usr/libexec/freezy-os-update /usr/libexec/freezy-update /usr/lib/greenboot/check/required.d/50-freezy.sh /usr/libexec/freezy-jump /usr/share/freezy-net \
+chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-data /usr/libexec/freezy-os-update /usr/libexec/freezy-backup /usr/libexec/freezy-update /usr/lib/greenboot/check/required.d/50-freezy.sh /usr/libexec/freezy-jump /usr/share/freezy-net \
     /usr/share/freezy-vm-interfaces /usr/share/freezy-firewalld-zones /usr/share/freezy-images /usr/share/containers/systemd \
     /etc/containers/systemd /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf \
     /usr/lib/tmpfiles.d/freezy-image.conf /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests
@@ -114,5 +117,5 @@ chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /u
 firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp
 systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
     libvirt-guests.service freezy-data.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
-    freezy-firewall.service freezy-net.path freezy-jump.service greenboot-healthcheck.service
+    freezy-firewall.service freezy-net.path freezy-jump.service freezy-backup.timer greenboot-healthcheck.service
 systemctl --global enable freezy-arena-image.service

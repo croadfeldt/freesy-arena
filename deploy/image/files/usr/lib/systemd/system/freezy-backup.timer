@@ -1,0 +1,12 @@
+# The arena writes a backup after every committed match, and matches are several minutes apart, so
+# a copy every five minutes has each match's backup off the server before the next one ends.
+[Unit]
+Description=Copy the Freezy Arena database backups off the field server, every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

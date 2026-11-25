@@ -1,0 +1,190 @@
+#!/usr/bin/python3
+"""Copy the arena's database backups off the field server. Run as root.
+
+    freezy-backup            copy now (freezy-backup.timer runs this every few minutes)
+    freezy-backup --status   say where backups go and when the last copy succeeded
+
+The arena writes a copy of its database to db/backups in its data folder after every committed match,
+on the same disk as the database. This copies that folder somewhere else, so a dead disk does not lose
+the event.
+
+Where to is `freezy_backup_target` in /etc/freezy-net/vars.yaml:
+
+    ""                      nowhere; this does nothing (the default)
+    label:NAME              a disk whose filesystem is labelled NAME (a USB stick, for one), into the
+                            folder freezy-backups on it
+    anything else           an rsync destination, such as backup@host:/srv/freezy or rsync://host/freezy
+
+Nothing is ever deleted at the target. An rsync destination over ssh uses the key in
+/etc/freezy-net/backup_key when that file exists, and trusts the host's key the first time it sees it.
+
+Exit status: 0 copied, or nothing to do; 1 a target is set and the copy did not happen.
+"""
+import argparse
+import datetime
+import os
+import re
+import subprocess
+import sys
+
+import yaml
+
+DEFAULTS = "/usr/share/freezy-net/vars.yaml"
+OVERRIDES = "/etc/freezy-net/vars.yaml"
+SOURCE = "/var/lib/freezy/arena/db/backups"
+LAST = "/var/lib/freezy/backup.last"
+MOUNT = "/run/freezy-backup"
+KEY = "/etc/freezy-net/backup_key"
+LABELS = "/dev/disk/by-label"
+FOLDER = "freezy-backups"
+SETTING = "freezy_backup_target"
+
+
+class Failed(Exception):
+    """A target is set and the copy did not happen."""
+
+
+def say(message):
+    print(message, flush=True)
+
+
+def load_settings(defaults=DEFAULTS, overrides=OVERRIDES):
+    settings = {}
+    for path in (defaults, overrides):
+        if os.path.isfile(path):
+            with open(path) as handle:
+                settings.update(yaml.safe_load(handle) or {})
+    return settings
+
+
+def target(settings):
+    """(kind, value): (None, None) when off, ("disk", label) or ("rsync", destination)."""
+    value = str(settings.get(SETTING) or "").strip()
+    if not value:
+        return None, None
+    if value.startswith("label:"):
+        label = value[len("label:"):]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", label):
+            raise Failed(f"{SETTING}: '{label}' is not a filesystem label I can use "
+                         "(letters, digits, '_', '.' and '-')")
+        return "disk", label
+    if value.startswith("-") or any(c.isspace() for c in value):
+        raise Failed(f"{SETTING}: '{value}' is not an rsync destination")
+    return "rsync", value
+
+
+def backups(source=SOURCE):
+    """The backup files the arena has written, oldest first."""
+    if not os.path.isdir(source):
+        return []
+    return sorted(name for name in os.listdir(source) if name.endswith(".db"))
+
+
+def rsync_command(source, destination, key=None):
+    """Times but not owners or modes, so a FAT or exFAT stick takes it; two seconds of slack for FAT's
+    clock. rsync writes each file under another name and renames it, so the target never holds half a
+    backup under a backup's name."""
+    command = ["rsync", "-rt", "--modify-window=2", "--timeout=60"]
+    if key:
+        command += ["-e", f"ssh -i {key} -o BatchMode=yes -o StrictHostKeyChecking=accept-new "
+                          "-o ConnectTimeout=15"]
+    return command + [source.rstrip("/") + "/", destination.rstrip("/") + "/"]
+
+
+def mounted_at(device, run=subprocess.run):
+    found = run(["findmnt", "-n", "-o", "TARGET", "--source", device], capture_output=True, text=True)
+    lines = found.stdout.split("\n")
+    return lines[0].strip() or None
+
+
+def to_disk(label, source=SOURCE, labels=LABELS, mount=MOUNT, run=subprocess.run):
+    """Copy to the disk labelled `label`. A disk somebody already mounted is used where it is and left
+    mounted; otherwise it is mounted for the copy and unmounted after, so it can be pulled at any other
+    moment."""
+    device = os.path.join(labels, label)
+    if not os.path.exists(device):
+        raise Failed(f"no disk labelled {label} is plugged in")
+    where = mounted_at(device, run)
+    mine = where is None
+    if mine:
+        os.makedirs(mount, exist_ok=True)
+        if run(["mount", "-o", "nodev,nosuid,noexec", device, mount]).returncode != 0:
+            raise Failed(f"could not mount the disk labelled {label}")
+        where = mount
+    try:
+        folder = os.path.join(where, FOLDER)
+        os.makedirs(folder, exist_ok=True)
+        if run(rsync_command(source, folder)).returncode != 0:
+            raise Failed(f"the copy to the disk labelled {label} failed")
+    finally:
+        # Unmounting writes everything out. A disk left mounted by someone else gets a sync instead.
+        if mine:
+            if run(["umount", mount]).returncode != 0:
+                raise Failed(f"could not unmount the disk labelled {label}; do not pull it yet")
+        else:
+            run(["sync", "-f", where])
+
+
+def to_rsync(destination, source=SOURCE, key=KEY, run=subprocess.run):
+    use_key = key if os.path.isfile(key) and not destination.startswith("rsync://") else None
+    if run(rsync_command(source, destination, use_key)).returncode != 0:
+        raise Failed(f"the copy to {destination} failed")
+
+
+def describe(kind, value):
+    return f"the disk labelled {value}" if kind == "disk" else value
+
+
+def copy(settings, source=SOURCE, last=LAST, run=subprocess.run, now=None, **places):
+    kind, value = target(settings)
+    if kind is None:
+        return f"{SETTING} is empty; backups stay on this server only."
+    files = backups(source)
+    if not files:
+        return "The arena has written no backups yet; nothing to copy."
+    if kind == "disk":
+        to_disk(value, source=source, run=run, **places)
+    else:
+        to_rsync(value, source=source, run=run, **places)
+    stamp = (now or datetime.datetime.now().astimezone()).isoformat(timespec="seconds")
+    with open(last, "w") as handle:
+        handle.write(f"{stamp} {len(files)} {files[-1]}\n")
+    return f"Copied {len(files)} backups to {describe(kind, value)}; the newest is {files[-1]}."
+
+
+def status(settings, source=SOURCE, last=LAST):
+    lines = []
+    kind, value = target(settings)
+    files = backups(source)
+    lines.append("Backups go to: " + (describe(kind, value) if kind else f"nowhere ({SETTING} is empty)"))
+    lines.append(f"On this server: {len(files)} backups" + (f", the newest {files[-1]}" if files else ""))
+    if os.path.isfile(last):
+        with open(last) as handle:
+            stamp, count, newest = handle.read().split()
+        lines.append(f"Last copy: {stamp}, {count} backups, the newest {newest}")
+        if files and files[-1] != newest:
+            lines.append("The newest backup on this server has not been copied yet.")
+    else:
+        lines.append("Last copy: never")
+    return lines
+
+
+def main(argv, settings=None, **places):
+    parser = argparse.ArgumentParser(prog="freezy-backup", description=__doc__.split("\n")[0])
+    parser.add_argument("--status", action="store_true", help="say where backups go and when the last copy succeeded")
+    args = parser.parse_args(argv)
+    try:
+        settings = load_settings() if settings is None else settings
+        if args.status:
+            for line in status(settings, **{k: v for k, v in places.items() if k in ("source", "last")}):
+                say(line)
+        else:
+            say(copy(settings, **places))
+    except Failed as error:
+        print(f"freezy-backup: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
