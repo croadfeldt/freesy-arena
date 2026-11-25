@@ -48,6 +48,7 @@ install -D -m 0755 "$host/freezy-net-helper" /usr/libexec/freezy-net-helper
 install -D -m 0755 "$host/freezy-vm-interfaces" /usr/share/freezy-vm-interfaces
 install -D -m 0755 "$host/freezy-firewalld-zones" /usr/share/freezy-firewalld-zones
 install -D -m 0755 "$src/deploy/image/freezy-image-import" /usr/libexec/freezy-image-import
+install -D -m 0755 "$src/deploy/image/freezy-data" /usr/libexec/freezy-data
 install -D -m 0755 "$host/freezy-jump" /usr/libexec/freezy-jump
 ln -s ../libexec/freezy-jump /usr/bin/freezy-jump
 install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" \
@@ -60,6 +61,21 @@ install -D -m 0644 "$host/freezy-kea.container" /usr/share/containers/systemd/fr
 install -D -m 0644 "$src/deploy/freezy-arena.container" "/etc/containers/systemd/users/$uid/freezy-arena.container"
 install -D -m 0644 "$src/deploy/image/freezy-arena.container.d/10-image.conf" \
     "/etc/containers/systemd/users/$uid/freezy-arena.container.d/10-image.conf"
+
+# Kept data. Outside the image the arena's data is a named volume in its account's home and Kea's leases
+# are in /var/lib/freezy-net. Here both are folders under /var/lib/freezy, which freezy-data mounts from
+# the data partition, so a reinstall that keeps the partition keeps them. Each line must change exactly
+# one mount, or the build stops.
+arena_unit=/etc/containers/systemd/users/$uid/freezy-arena.container
+kea_unit=/usr/share/containers/systemd/freezy-kea.container
+sed -i 's|^Volume=freezy-arena-data:/data:|Volume=/var/lib/freezy/arena:/data:|' "$arena_unit"
+sed -i 's|^Volume=/var/lib/freezy-net/kea:/var/lib/kea:|Volume=/var/lib/freezy/kea:/var/lib/kea:|' "$kea_unit"
+test "$(grep -c '^Volume=/var/lib/freezy/arena:/data:' "$arena_unit")" = 1
+test "$(grep -c '^Volume=/var/lib/freezy/kea:/var/lib/kea:' "$kea_unit")" = 1
+if grep -q 'freezy-arena-data\|/var/lib/freezy-net' "$arena_unit" "$kea_unit"; then
+    echo "install.sh: a container still keeps data outside /var/lib/freezy" >&2
+    exit 1
+fi
 
 # The arena's account, the boot-time units and their settings.
 cp -r "$src/deploy/image/files/." /
@@ -81,7 +97,7 @@ else
 fi
 
 # Nothing shipped may be group- or world-writable.
-chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-jump /usr/share/freezy-net \
+chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-data /usr/libexec/freezy-jump /usr/share/freezy-net \
     /usr/share/freezy-vm-interfaces /usr/share/freezy-firewalld-zones /usr/share/freezy-images /usr/share/containers/systemd \
     /etc/containers/systemd /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf \
     /usr/lib/tmpfiles.d/freezy-image.conf /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests
@@ -89,6 +105,6 @@ chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /u
 # firewalld keeps its defaults plus the arena's ports; the team VLAN filter decides what a team reaches.
 firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp
 systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
-    libvirt-guests.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
+    libvirt-guests.service freezy-data.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
     freezy-firewall.service freezy-net.path freezy-jump.service
 systemctl --global enable freezy-arena-image.service

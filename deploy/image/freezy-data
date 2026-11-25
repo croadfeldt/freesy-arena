@@ -1,0 +1,144 @@
+#!/usr/bin/python3
+"""Mount the field server's kept data and lay it out. Runs as root at every boot (freezy-data.service).
+
+Everything a reinstall must not lose lives under /var/lib/freezy:
+
+    arena/  the arena's /data: the event database, its backups, match logs, uploaded logos
+    kea/    Kea's leases
+    net/    the last team network request, applied again at boot
+    vm/     the jump machines' disks
+
+When a partition labelled `freezy-data` exists it is mounted there, and an installer that keeps that
+partition keeps all of the above. Without one the same folders sit on the root disk and the server runs
+the same way.
+
+Data found in an older place is moved in, once, and only into a folder that is still empty:
+  - on the root disk under /var/lib/freezy, when a partition is first added to a running server;
+  - where the image kept things before it had this folder (/var/lib/freezy-net and the arena account's
+    named volume).
+
+The last step writes /run/freezy-data-ready. The arena does not start without it, so a server whose data
+could not be mounted shows no arena, and never an empty event.
+"""
+import os
+import subprocess
+import sys
+
+LABEL = "freezy-data"
+ROOT = "/var/lib/freezy"
+READY = "/run/freezy-data-ready"
+STAGING = "/run/freezy-data-staging"
+ARENA_USER = "cheesy"
+# name, owner, mode. The arena's container runs as its account; the rest belongs to root.
+FOLDERS = [("arena", ARENA_USER, 0o750), ("kea", "root", 0o755), ("net", "root", 0o755), ("vm", "root", 0o711)]
+# Where the image kept each folder's contents before /var/lib/freezy held them.
+OLD_PLACES = {
+    "arena": "/var/home/cheesy/.local/share/containers/storage/volumes/freezy-arena-data/_data",
+    "kea": "/var/lib/freezy-net/kea",
+    "net": "/var/lib/freezy-net",
+}
+# Only this file moves out of /var/lib/freezy-net; its kea folder is handled as "kea".
+ONLY = {"net": ["last-request.json"]}
+
+
+def log(message):
+    print(f"freezy-data: {message}", flush=True)
+
+
+def entries(folder, only=None):
+    """What a folder holds, or [] when it is missing."""
+    try:
+        names = sorted(os.listdir(folder))
+    except FileNotFoundError:
+        return []
+    return [name for name in names if only is None or name in only]
+
+
+def move_in(source, destination, only=None):
+    """Move the contents of `source` into `destination` when there is something to move and
+    `destination` is empty. Returns the names moved. Owners, modes and labels are kept."""
+    names = entries(source, only)
+    if not names or entries(destination):
+        return []
+    os.makedirs(destination, exist_ok=True)
+    for name in names:
+        # mv, not shutil.move: across filesystems it keeps owners and SELinux labels.
+        subprocess.run(["mv", "--", os.path.join(source, name), os.path.join(destination, name)], check=True)
+    return names
+
+
+def adopt(root_disk, partition):
+    """Carry data from the root disk onto a partition, folder by folder. Returns {folder: names}."""
+    moved = {}
+    for name, _, _ in FOLDERS:
+        names = move_in(os.path.join(root_disk, name), os.path.join(partition, name))
+        if names:
+            moved[name] = names
+    return moved
+
+
+def lay_out(root, owner_ids):
+    """Make the folders with their owners and modes. `owner_ids` maps an account to (uid, gid)."""
+    for name, owner, mode in FOLDERS:
+        path = os.path.join(root, name)
+        os.makedirs(path, exist_ok=True)
+        uid, gid = owner_ids[owner]
+        if (os.stat(path).st_uid, os.stat(path).st_gid) != (uid, gid):
+            os.chown(path, uid, gid)
+        os.chmod(path, mode)
+
+
+def bring_in_old_places(root, old_places=None):
+    moved = {}
+    for name, old in (old_places or OLD_PLACES).items():
+        names = move_in(old, os.path.join(root, name), ONLY.get(name))
+        if names:
+            moved[name] = names
+    return moved
+
+
+def partition_device():
+    """The device labelled freezy-data, or None."""
+    subprocess.run(["udevadm", "settle", "--timeout=15"], check=False)
+    found = subprocess.run(["blkid", "-L", LABEL], capture_output=True, text=True)
+    return found.stdout.strip() or None
+
+
+def mount(device, where):
+    os.makedirs(where, exist_ok=True)
+    subprocess.run(["mount", "-o", "nodev,nosuid", device, where], check=True)
+
+
+def main():
+    import pwd
+    try:
+        os.unlink(READY)
+    except FileNotFoundError:
+        pass
+    os.makedirs(ROOT, exist_ok=True)
+    device = partition_device()
+    if device and not os.path.ismount(ROOT):
+        if any(entries(os.path.join(ROOT, name)) for name, _, _ in FOLDERS):
+            mount(device, STAGING)
+            try:
+                for name, names in adopt(ROOT, STAGING).items():
+                    log(f"moved {name}/ from the root disk onto the partition: {', '.join(names)}")
+            finally:
+                subprocess.run(["umount", STAGING], check=True)
+        mount(device, ROOT)
+        log(f"mounted {device} at {ROOT}")
+    elif not device:
+        log(f"no partition labelled {LABEL}; keeping data on the root disk")
+    for name, names in bring_in_old_places(ROOT).items():
+        log(f"moved {name}/ from where the image kept it before: {', '.join(names)}")
+    account = pwd.getpwnam(ARENA_USER)
+    lay_out(ROOT, {"root": (0, 0), ARENA_USER: (account.pw_uid, account.pw_gid)})
+    # A new filesystem has no SELinux labels. The containers and libvirt label what is inside each folder.
+    subprocess.run(["restorecon", ROOT] + [os.path.join(ROOT, name) for name, _, _ in FOLDERS], check=False)
+    with open(READY, "w"):
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -65,15 +65,24 @@ reinstall).
 An update never touches `/var`, so the database already survives updates. What
 it does not survive is a reinstall. So:
 
-- **One partition, labelled `freezy-data`, mounted at `/var/lib/freezy`.** The
-  image mounts it by label when it is there. Without it the image runs the same
-  way on the root disk, so a quick test install needs no special layout.
-- **What moves onto it:**
-  - `arena/`: the arena's `/data`. The Quadlet binds this folder where it uses
-    a named volume today (`deploy/freezy-arena.container:27`).
+- **One partition, labelled `freezy-data`, mounted at `/var/lib/freezy`.** A
+  step at every boot (`freezy-data`) mounts it by label when it is there.
+  Without it the image runs the same way on the root disk, so a quick test
+  install needs no special layout.
+- **What is on it:**
+  - `arena/`: the arena's `/data`. In the image the Quadlet binds this folder;
+    outside the image it stays the named volume `freezy-arena-data`.
   - `kea/`: the leases.
   - `net/`: the last network request, replayed at boot.
   - `vm/`: the jump machines' disks.
+- **Data in an older place is moved in once**, and only into a folder that is
+  still empty, so nothing on the partition is ever overwritten:
+  - from the root disk under `/var/lib/freezy`, when a partition is added to a
+    server that ran without one;
+  - from `/var/lib/freezy-net` and the named volume, where the image kept
+    things before this.
+- **The arena waits for that step.** If the partition cannot be mounted the
+  arena does not start, so an operator sees no arena and never an empty event.
 - **The install keeps it.** An installer that finds the label leaves the
   partition alone and makes it when it is missing. The standalone path does
   this in its own kickstart. The fleet manager path needs the manager to learn
@@ -232,11 +241,11 @@ the plan beside it cover that work. The standalone path does not wait for it.
 2. CI: build the image, lint it, run the deployment tests. Done.
 3. One uid for `cheesy`, 880, from a build argument. Done.
 4. The data partition: the mount, the arena's data folder bound from it, Kea's
-   leases and the last request moved onto it, and a one-time move for a server
-   that has the old locations.
+   leases and the last request on it, and a one-time move from the old
+   locations. Done. The installer that makes and keeps the partition is step 9.
 5. The boot check and the no-update-during-a-match hold.
 6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
-   internal role. Done, with their disks on the root disk until step 4.
+   internal role. Done.
 7. The backup timer.
 8. A test that an older arena opens a newer database.
 9. The standalone installer: the kickstart and the ISO step.
