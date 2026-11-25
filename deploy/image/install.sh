@@ -28,18 +28,20 @@ if [ -n "$taken" ]; then
 fi
 
 # Virtual machines (the jump machine), Ansible for the network playbooks, the firewall, a few tools.
+# greenboot runs the boot check and rolls back an image that fails it; only greenboot itself, because
+# its default checks need a way out and a field server often has none.
 # libvirt's `default` network is not installed: its DHCP server would hold the port Kea needs. Weak
 # dependencies are left out: they pull in storage and network back ends the field server never uses.
 dnf -y --setopt=install_weak_deps=False install libvirt-daemon-kvm libvirt-daemon-config-nwfilter \
     libvirt-client qemu-img ansible-core nftables firewalld python3 tmux vim-enhanced rsync \
-    policycoreutils-python-utils
+    policycoreutils-python-utils greenboot
 dnf clean all
 rm -rf /var/cache/* /var/log/dnf* /var/lib/dnf /run/dnf
 
 # Prove the install really landed. On some build stores (rootless podman on ZFS is one) the package
 # database and the SELinux policy store lose their updates while the files still arrive, which gives an
 # image that looks fine and is not.
-rpm -q libvirt-daemon-kvm ansible-core firewalld nftables python3-pyyaml >/dev/null
+rpm -q libvirt-daemon-kvm ansible-core firewalld nftables python3-pyyaml greenboot >/dev/null
 test ! -e /etc/selinux/targeted/tmp && test ! -e /etc/selinux/targeted/previous
 
 # The host network helper, the team VLAN filter, the playbooks and the units, in the places
@@ -50,6 +52,10 @@ install -D -m 0755 "$host/freezy-firewalld-zones" /usr/share/freezy-firewalld-zo
 install -D -m 0755 "$src/deploy/image/freezy-image-import" /usr/libexec/freezy-image-import
 install -D -m 0755 "$src/deploy/image/freezy-data" /usr/libexec/freezy-data
 install -D -m 0755 "$host/freezy-jump" /usr/libexec/freezy-jump
+# The image's own update command, and freezy-update, whose arena client it uses to ask about the match.
+install -D -m 0755 "$src/deploy/image/freezy-os-update" /usr/libexec/freezy-os-update
+install -D -m 0755 "$src/deploy/freezy-update" /usr/libexec/freezy-update
+ln -s ../libexec/freezy-os-update /usr/bin/freezy-os-update
 ln -s ../libexec/freezy-jump /usr/bin/freezy-jump
 install -m 0644 "$host/freezy-net.path" "$host/freezy-net.service" "$host/freezy-firewall.service" \
     "$host/freezy-jump.service" /usr/lib/systemd/system/
@@ -97,7 +103,7 @@ else
 fi
 
 # Nothing shipped may be group- or world-writable.
-chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-data /usr/libexec/freezy-jump /usr/share/freezy-net \
+chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /usr/libexec/freezy-data /usr/libexec/freezy-os-update /usr/libexec/freezy-update /usr/lib/greenboot/check/required.d/50-freezy.sh /usr/libexec/freezy-jump /usr/share/freezy-net \
     /usr/share/freezy-vm-interfaces /usr/share/freezy-firewalld-zones /usr/share/freezy-images /usr/share/containers/systemd \
     /etc/containers/systemd /usr/lib/sysusers.d/freezy.conf /usr/lib/tmpfiles.d/freezy-net.conf \
     /usr/lib/tmpfiles.d/freezy-image.conf /etc/subuid /etc/subgid /etc/sysconfig/libvirt-guests
@@ -106,5 +112,5 @@ chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /u
 firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp
 systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
     libvirt-guests.service freezy-data.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
-    freezy-firewall.service freezy-net.path freezy-jump.service
+    freezy-firewall.service freezy-net.path freezy-jump.service greenboot-healthcheck.service
 systemctl --global enable freezy-arena-image.service

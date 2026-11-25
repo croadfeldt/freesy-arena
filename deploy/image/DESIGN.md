@@ -115,12 +115,26 @@ rule for the arena user").
 - **One image carries everything**, so an update replaces the operating system,
   the host pieces, the arena and Kea together, and `bootc rollback` puts all of
   them back together.
-- **A boot is good when** the arena answers on 8080, Kea is active, and the
-  team VLAN filter is loaded. A boot check in the image tests those. A new
-  image that fails it rolls back on its own.
-- **Never during a match.** `freezy-update` already refuses while a match is in
-  progress (`deploy/freezy-update`). The image keeps that rule as a hold the
-  update step asks before it stages anything.
+- **A boot is good when** the boot's own steps finished (kept data, network
+  interfaces, host setup), the team VLAN filter is loaded, the arena answers on
+  8080, and Kea runs once a match has ever been loaded. greenboot runs that
+  check at every boot (`/usr/lib/greenboot/check/required.d/50-freezy.sh`). A
+  new image that fails it is restarted, and after a few failed tries (four in
+  my test, about 14 minutes) the
+  bootloader goes back to the image before. Every check is local, so a server
+  with no switch attached and no way out does not roll back a good image.
+- **The install must keep `/boot` mounted.** On a disk made by `bootc install
+  to-disk` with no other setting, `/boot` is unmounted whenever it is idle for
+  two minutes. That stops a boot check still waiting, and in one test it left
+  a staged update unapplied at the restart. With `/boot` kept mounted (its own
+  partition, or the kernel argument `systemd.gpt_auto=0`) both work. The
+  installer in step 9 gives `/boot` its own partition, and I'll repeat the
+  rollback proof on a server it installed.
+- **Never during a match.** `freezy-os-update` is the image's update command:
+  it stages the newest build, moves to another image, or rolls back, and it
+  refuses while a match is running or its results are not committed, the rule
+  `deploy/freezy-update` keeps for the arena alone. Anything else that updates
+  the server asks `freezy-os-update --check` first.
 - **Updates are by hand.** Nothing updates itself at an event.
 - **`freezy-update` stays** for package mode and as the way to try an arena
   build on an image-mode server without rebuilding the image. Its kept
@@ -243,7 +257,7 @@ the plan beside it cover that work. The standalone path does not wait for it.
 4. The data partition: the mount, the arena's data folder bound from it, Kea's
    leases and the last request on it, and a one-time move from the old
    locations. Done. The installer that makes and keeps the partition is step 9.
-5. The boot check and the no-update-during-a-match hold.
+5. The boot check and the no-update-during-a-match hold. Done.
 6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
    internal role. Done.
 7. The backup timer.
