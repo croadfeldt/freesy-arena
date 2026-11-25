@@ -95,7 +95,8 @@ it does not survive is a reinstall. So:
   - **Empty, the default:** nothing is copied.
   - **`label:NAME`:** a disk whose filesystem has that label, a USB stick for
     one. It is mounted for the copy and unmounted after, so it can be pulled
-    at any other moment. FAT and exFAT work.
+    at any other moment. Owners and modes are not copied, so a FAT stick takes
+    it.
   - **Anything else:** an rsync destination.
 - **Nothing is deleted at the target**, so clearing or restoring the database
   on the server leaves the copies.
