@@ -44,6 +44,9 @@ import yaml
 DEFAULTS = "/usr/share/freezy-net/vars.yaml"
 OVERRIDES = "/etc/freezy-net/vars.yaml"
 BASE_DISK = "/usr/share/freezy-images/freezy-jump.qcow2"
+# Which disk image that is (its checksum, written when the server's image is built). Each machine's disk
+# has the one it was copied from beside it, so an updated server can tell its machines' disks are old.
+BASE_ID = BASE_DISK + ".id"
 DISKS = "/var/lib/freezy/vm"
 # libvirt keeps what each machine writes to its serial console here; the machine reports on its own
 # setup there (deploy/jump/freezy-jump-role).
@@ -115,21 +118,50 @@ def read_keys(paths=KEYS):
     return []
 
 
-def credential(role, settings, keys):
+def read_line(path):
+    try:
+        with open(path) as handle:
+            return handle.read().strip() or None
+    except OSError:
+        return None
+
+
+def disk_is_old(name, disks=DISKS, base_id=BASE_ID):
+    """True when this server's image carries another jump disk than the one the machine's was copied
+    from. A server that carries no disk, or does not say which, replaces nothing."""
+    carried = read_line(base_id)
+    return carried is not None and read_line(os.path.join(disks, name + ".id")) != carried
+
+
+def host_key(name, disks=DISKS):
+    """The machine's ssh host key, made once and kept beside its disk. The machine is handed it at
+    every start, so it is the same machine to ssh after its disk is replaced."""
+    path = os.path.join(disks, name + ".hostkey")
+    if not os.path.exists(path):
+        os.makedirs(disks, mode=0o711, exist_ok=True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", path], check=True)
+        os.unlink(path + ".pub")
+    with open(path) as handle:
+        return handle.read()
+
+
+def credential(role, settings, keys, ssh_host_key=None):
     """What the machine is told when it starts: the freezy.jump credential, as JSON text."""
     name = ROLES[role][0]
     passed = {key: settings[key] for key in PASSED_ON if key in settings}
     # Nothing else on the image's jump machine answers DNS, so it does.
     passed["freezy_transit_dns"] = True
-    return json.dumps({"name": name, "role": role, "outside_mac": mac(name, "outside"),
-                       "inside_mac": mac(name, "inside"), "ssh_keys": keys, "vars": passed},
-                      sort_keys=True, separators=(",", ":"))
+    told = {"name": name, "role": role, "outside_mac": mac(name, "outside"),
+            "inside_mac": mac(name, "inside"), "ssh_keys": keys, "vars": passed}
+    if ssh_host_key:
+        told["ssh_host_key"] = ssh_host_key
+    return json.dumps(told, sort_keys=True, separators=(",", ":"))
 
 
-def domain_xml(role, settings, keys, disks=DISKS):
+def domain_xml(role, settings, keys, disks=DISKS, ssh_host_key=None):
     """The libvirt definition of a jump machine."""
     name, outside, inside = ROLES[role]
-    secret = base64.b64encode(credential(role, settings, keys).encode()).decode()
+    secret = base64.b64encode(credential(role, settings, keys, ssh_host_key).encode()).decode()
     cards = "".join("""
     <interface type='direct'>
       <mac address='%s'/>
@@ -306,17 +338,30 @@ def turn_on(role, settings, keys, restart, say):
             raise Refused("%s needs the field server's %s interface (%s), which does not exist"
                           % (name, network, dev))
     disk = os.path.join(DISKS, name + ".qcow2")
-    if not os.path.exists(disk):
-        if not os.path.exists(BASE_DISK):
-            raise Refused("%s has no disk and this field server carries no jump disk image (%s)"
-                          % (name, BASE_DISK))
+    have = os.path.exists(disk)
+    old = have and disk_is_old(name, DISKS, BASE_ID)
+    if not have and not os.path.exists(BASE_DISK):
+        raise Refused("%s has no disk and this field server carries no jump disk image (%s)"
+                      % (name, BASE_DISK))
+    if not have or old:
+        # After an update the server carries a newer jump disk. The machine gets it; nothing it needs
+        # is on the old one: its role and settings come from this server at every start, and so does
+        # its ssh host key.
+        if old:
+            stop(name)
         os.makedirs(DISKS, mode=0o711, exist_ok=True)
         shutil.copyfile(BASE_DISK, disk + ".new")
         os.chmod(disk + ".new", 0o600)
         os.replace(disk + ".new", disk)
+        carried = read_line(BASE_ID)
+        if carried:
+            with open(disk[:-len(".qcow2")] + ".id", "w") as handle:
+                handle.write(carried + "\n")
+        say("%s: %s" % (name, "disk replaced by the one this server now carries; its settings and ssh "
+                              "host key are kept" if old else "new disk from the carried image"))
+    new = domain_xml(role, settings, keys, ssh_host_key=host_key(name, DISKS))
+    if not have or old:
         subprocess.run(["restorecon", "-R", DISKS], check=False)
-        say("%s: new disk from the carried image" % name)
-    new = domain_xml(role, settings, keys)
     now = virsh("dumpxml", "--inactive", "--security-info", name, check=False)
     same = (now.returncode == 0 and told(now.stdout) == told(new)
             and cards_of(now.stdout) == cards_of(new)

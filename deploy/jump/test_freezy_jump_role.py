@@ -156,5 +156,29 @@ class ImageTest(unittest.TestCase):
             self.assertIn("console=ttyS0", handle.read())
 
 
+class HostKeyTest(unittest.TestCase):
+    """The field server keeps each machine's ssh host key and hands it over at every start."""
+
+    def test_the_key_from_the_field_server_becomes_the_only_host_key(self):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", folder + "/given"], check=True)
+            with open(folder + "/given") as handle:
+                key = handle.read()
+            with open(folder + "/given.pub") as handle:
+                public = handle.read().split()[1]
+            etc = os.path.join(folder, "ssh")
+            os.makedirs(etc)
+            self.assertTrue(mod.install_host_key(key, etc))
+            with open(os.path.join(etc, "ssh_host_ed25519_key.pub")) as handle:
+                self.assertEqual(handle.read().split()[1], public)
+            self.assertEqual(os.stat(os.path.join(etc, "ssh_host_ed25519_key")).st_mode & 0o777, 0o600)
+            with open(os.path.join(etc, "sshd_config.d", "10-freezy-host-key.conf")) as handle:
+                self.assertEqual(handle.read(), "HostKey /etc/ssh/ssh_host_ed25519_key\n")
+            # The next start hands over the same key and changes nothing, so sshd is not restarted.
+            self.assertFalse(mod.install_host_key(key, etc))
+
+
 if __name__ == "__main__":
     unittest.main()

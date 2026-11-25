@@ -7,11 +7,14 @@ strings, so it needs no network and no second disk). The credential is JSON:
 
     {"name": "jump-external", "role": "external",
      "outside_mac": "52:54:00:..", "inside_mac": "52:54:00:..",
-     "ssh_keys": ["ssh-ed25519 ..."], "vars": {"freezy_transit_candidates": [...]}}
+     "ssh_keys": ["ssh-ed25519 ..."], "ssh_host_key": "-----BEGIN OPENSSH PRIVATE KEY-----...",
+     "vars": {"freezy_transit_candidates": [...]}}
 
 role     external: outside card on the venue's network, inside card on the transit network.
          internal: outside card on the transit network, inside card on the admin network.
 vars     settings from the field server's /etc/freezy-net/vars.yaml, handed to the playbook.
+ssh_host_key  this machine's ssh host key. The field server keeps it, so the machine is the same
+         machine to ssh after an update gave it a new disk.
 
 This script finds the two cards by MAC address, installs the ssh keys for root, sets the host name,
 and runs jump_vm.yaml against this machine. It runs at every boot, and the playbook changes only what
@@ -85,6 +88,30 @@ def install_keys(keys, home="/root"):
     os.replace(path + ".new", path)
 
 
+def install_host_key(key, folder="/etc/ssh", run=subprocess.run):
+    """Make `key` this machine's only ssh host key. Returns True when something changed."""
+    path = os.path.join(folder, "ssh_host_ed25519_key")
+    text = key.strip() + "\n"
+    try:
+        with open(path) as handle:
+            if handle.read() == text:
+                return False
+    except FileNotFoundError:
+        pass
+    with open(os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as handle:
+        handle.write(text)
+    os.replace(path + ".new", path)
+    public = run(["ssh-keygen", "-y", "-f", path], check=True, capture_output=True, text=True).stdout
+    with open(path + ".pub", "w") as handle:
+        handle.write(public)
+    # Only this key: the others are made afresh on every new disk, and a client that had learned one
+    # of them would refuse the machine after an update.
+    os.makedirs(os.path.join(folder, "sshd_config.d"), exist_ok=True)
+    with open(os.path.join(folder, "sshd_config.d", "10-freezy-host-key.conf"), "w") as handle:
+        handle.write("HostKey /etc/ssh/ssh_host_ed25519_key\n")
+    return True
+
+
 def main():
     path = os.path.join(os.environ.get("CREDENTIALS_DIRECTORY", ""), "freezy.jump")
     if not os.path.isfile(path):
@@ -95,6 +122,9 @@ def main():
     variables = playbook_vars(cfg, interfaces())
     if "ssh_keys" in cfg:
         install_keys(cfg["ssh_keys"])
+    if cfg.get("ssh_host_key") and install_host_key(cfg["ssh_host_key"]):
+        subprocess.run(["restorecon", "-R", "/etc/ssh"], check=False)
+        subprocess.run(["systemctl", "try-reload-or-restart", "sshd.service"], check=False)
     if cfg.get("name"):
         subprocess.run(["hostnamectl", "hostname", cfg["name"]], check=True)
     os.makedirs(os.path.dirname(VARS_OUT), exist_ok=True)

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -153,6 +154,109 @@ class ApplyTest(unittest.TestCase):
             said = []
             mod.apply(DEFAULTS, say=said.append)
         self.assertTrue(any("no ssh keys" in line for line in said))
+
+
+class UpdateTest(unittest.TestCase):
+    """An updated server gives its machines the jump disk it now carries, and they stay the same
+    machines: same role and settings, same ssh host key."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.disks = os.path.join(self.tmp.name, "vm")
+        os.makedirs(self.disks)
+        self.base = os.path.join(self.tmp.name, "freezy-jump.qcow2")
+        self.carry("disk one", "1111")
+        self.calls, self.stopped = [], []
+        patches = [mock.patch.object(mod, "DISKS", self.disks), mock.patch.object(mod, "BASE_DISK", self.base),
+                   mock.patch.object(mod, "BASE_ID", self.base + ".id"),
+                   mock.patch.object(mod, "host_interface", lambda settings, network: "lo"),
+                   mock.patch.object(mod, "virsh", self.virsh), mock.patch.object(mod, "state", lambda name: "running"),
+                   mock.patch.object(mod, "stop", self.stopped.append),
+                   mock.patch.object(mod, "host_key", lambda name, disks: "KEY OF " + name),
+                   mock.patch.object(mod.subprocess, "run", lambda *a, **k: None)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def carry(self, content, identity):
+        with open(self.base, "w") as handle:
+            handle.write(content)
+        if identity is None:
+            os.unlink(self.base + ".id")
+        else:
+            with open(self.base + ".id", "w") as handle:
+                handle.write(identity + "\n")
+
+    def virsh(self, *args, check=True):
+        self.calls.append(args)
+        if args[0] == "dumpxml":
+            # Already defined as it would be defined now.
+            now = mod.domain_xml("external", DEFAULTS, KEYS, ssh_host_key="KEY OF freezy-jump-external")
+            return mock.Mock(returncode=0, stdout=now)
+        return mock.Mock(returncode=0, stdout="")
+
+    def turn_on(self):
+        said = []
+        mod.turn_on("external", DEFAULTS, KEYS, False, said.append)
+        with open(os.path.join(self.disks, "freezy-jump-external.qcow2")) as handle:
+            return handle.read(), said
+
+    def test_a_first_start_copies_the_carried_disk_and_notes_which_it_was(self):
+        self.assertEqual(self.turn_on()[0], "disk one")
+        self.assertEqual(mod.read_line(os.path.join(self.disks, "freezy-jump-external.id")), "1111")
+
+    def test_the_same_server_image_leaves_the_disk_alone(self):
+        self.turn_on()
+        with open(os.path.join(self.disks, "freezy-jump-external.qcow2"), "w") as handle:
+            handle.write("written to since")
+        content, said = self.turn_on()
+        self.assertEqual(content, "written to since")
+        self.assertEqual(self.stopped, [])
+
+    def test_an_updated_server_replaces_the_disk_after_stopping_the_machine(self):
+        self.turn_on()
+        self.carry("disk two", "2222")
+        content, said = self.turn_on()
+        self.assertEqual(content, "disk two")
+        self.assertEqual(self.stopped, ["freezy-jump-external"])
+        self.assertTrue(any("replaced" in line for line in said), said)
+        self.assertEqual(mod.read_line(os.path.join(self.disks, "freezy-jump-external.id")), "2222")
+
+    def test_a_disk_made_before_disks_were_tracked_is_replaced_once(self):
+        with open(os.path.join(self.disks, "freezy-jump-external.qcow2"), "w") as handle:
+            handle.write("from an older server image")
+        self.assertEqual(self.turn_on()[0], "disk one")
+        self.assertEqual(self.turn_on()[0], "disk one")
+        self.assertEqual(self.stopped, ["freezy-jump-external"])
+
+    def test_a_server_that_does_not_say_which_disk_it_carries_replaces_nothing(self):
+        self.turn_on()
+        self.carry("disk two", None)
+        with open(os.path.join(self.disks, "freezy-jump-external.qcow2"), "w") as handle:
+            handle.write("kept")
+        self.assertEqual(self.turn_on()[0], "kept")
+
+    def test_the_machine_is_handed_its_host_key(self):
+        told = json.loads(mod.credential("external", DEFAULTS, KEYS, "KEY"))
+        self.assertEqual(told["ssh_host_key"], "KEY")
+        self.assertNotIn("ssh_host_key", json.loads(mod.credential("external", DEFAULTS, KEYS)))
+
+    def test_the_image_says_which_disk_it_carries(self):
+        with open(os.path.join(HERE, "..", "image", "install.sh")) as handle:
+            install = handle.read()
+        self.assertIn("> /usr/share/freezy-images/freezy-jump.qcow2.id", install)
+        self.assertEqual(mod.__dict__["BASE_ID"], self.base + ".id")
+
+
+class HostKeyTest(unittest.TestCase):
+    def test_a_key_is_made_once_and_kept(self):
+        with tempfile.TemporaryDirectory() as disks:
+            first = mod.host_key("freezy-jump-external", disks)
+            self.assertIn("OPENSSH PRIVATE KEY", first)
+            self.assertEqual(mod.host_key("freezy-jump-external", disks), first)
+            self.assertNotEqual(mod.host_key("freezy-jump-internal", disks), first)
+            self.assertEqual(os.stat(os.path.join(disks, "freezy-jump-external.hostkey")).st_mode & 0o777, 0o600)
 
 
 class StatusTest(unittest.TestCase):
