@@ -100,7 +100,9 @@ def main():
     os.makedirs(os.path.dirname(VARS_OUT), exist_ok=True)
     with open(VARS_OUT, "w") as handle:
         json.dump(variables, handle)
-    print("freezy-jump-role: %s, outside %s, inside %s" % (
+    # The three lines that start "freezy-jump-role: setting up", "set up" and "FAILED" are read by
+    # the field server from this machine's console (freezy-jump status). Keep their wording.
+    print("freezy-jump-role: setting up as %s, outside %s, inside %s" % (
         cfg["role"], variables["freezy_jump_outside"]["ifname"], variables["freezy_jump_inside"]["ifname"]))
     sys.stdout.flush()
     return subprocess.run(["ansible-playbook", "-i", "localhost,", "-c", "local", PLAYBOOK,
@@ -109,7 +111,9 @@ def main():
 
 if __name__ == "__main__":
     try:
-        sys.exit(main())
+        code = main()
     except (ValueError, OSError, subprocess.CalledProcessError) as err:
-        print("freezy-jump-role: %s" % err, file=sys.stderr)
-        sys.exit(1)
+        print("freezy-jump-role: %s" % err)
+        code = 1
+    print("freezy-jump-role: %s" % ("set up" if code == 0 else "FAILED"))
+    sys.exit(code)

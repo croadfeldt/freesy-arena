@@ -128,8 +128,13 @@
     # A new machine's cards come up on NetworkManager's own automatic connections, which are in no
     # zone of ours. Switch each card to the connection just made for it. The priority above keeps it
     # that way at the next boot.
+    #
+    # `--wait 0` starts the switch and does not wait for an address. A card that asks the venue (or
+    # the external machine) for one may get no answer for minutes, or ever: waiting here failed a new
+    # machine's whole setup when the field was started with no venue network. The steps below wait
+    # for what they need.
     - name: Put each card on the connection just created for it
-      ansible.builtin.command: nmcli connection up {{ item.item.connection }}
+      ansible.builtin.command: nmcli --wait 0 connection up {{ item.item.connection }}
       when: item.changed
       loop: "{{ freezy_created.results }}"
       loop_control:

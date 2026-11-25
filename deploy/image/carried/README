@@ -1,0 +1,6 @@
+Files the field-server image carries that are built outside its own build. The image build copies
+everything here into the image's /usr/share/freezy-images.
+
+  freezy-jump.qcow2   the jump machines' disk: deploy/jump/build-disk deploy/image/carried/freezy-jump.qcow2
+
+Nothing here but this file is kept in git.

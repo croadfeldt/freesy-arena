@@ -59,5 +59,42 @@ class ImageInstallTest(unittest.TestCase):
                         "nothing in the image's tmpfiles makes /etc/localtime")
 
 
+class JumpMachinesTest(unittest.TestCase):
+    """The image starts the jump machines the settings ask for (deploy/host/freezy-jump)."""
+
+    def setUp(self):
+        with open(os.path.join(HERE, "install.sh")) as handle:
+            self.install = handle.read()
+        with open(os.path.join(HERE, "..", "host", "freezy-jump")) as handle:
+            self.command = handle.read()
+
+    def constant(self, name):
+        return re.search(rf'^{name} = "([^"]+)"', self.command, re.M).group(1)
+
+    def test_the_unit_runs_the_command_where_the_image_puts_it(self):
+        with open(os.path.join(HERE, "..", "host", "freezy-jump.service")) as handle:
+            started = re.search(r"^ExecStart=(\S+)", handle.read(), re.M).group(1)
+        self.assertIn(f'"$host/freezy-jump" {started}\n', self.install)
+        self.assertIn('"$host/freezy-jump.service"', self.install)
+        self.assertRegex(self.install, r"systemctl enable [^\n]*(\\\n[^\n]*)*freezy-jump\.service")
+
+    def test_the_carried_disk_goes_where_the_command_looks_for_it(self):
+        self.assertIn(f'"$images/freezy-jump.qcow2" {self.constant("BASE_DISK")}\n', self.install)
+
+    def test_a_build_without_the_disk_still_builds(self):
+        # CI and a quick local build have no disk; only starting a jump machine needs it.
+        self.assertIn('if [ -f "$images/freezy-jump.qcow2" ]', self.install)
+
+    def test_the_folder_for_the_machines_disks_exists_at_boot(self):
+        with open(os.path.join(HERE, "files", "usr", "lib", "tmpfiles.d", "freezy-image.conf")) as handle:
+            made = [line.split()[1] for line in handle if line.startswith("d ")]
+        self.assertIn(self.constant("DISKS"), made)
+
+    def test_the_settings_file_the_command_reads_is_the_one_the_image_installs(self):
+        # install.sh copies deploy/host/ansible to /usr/share/freezy-net.
+        self.assertEqual(self.constant("DEFAULTS"), "/usr/share/freezy-net/vars.yaml")
+        self.assertIn('cp -r "$host/ansible/." /usr/share/freezy-net/', self.install)
+
+
 if __name__ == "__main__":
     unittest.main()

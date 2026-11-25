@@ -88,13 +88,61 @@ UniFi gateway, for a field with no router of its own.
 | Inside card, admin VLAN | the admin network's gateway address (`freezy_fms_gateway`); accepts ssh, DNS and DHCP; answers DNS and hands out `freezy_admin_dhcp_first` to `freezy_admin_dhcp_last` |
 | Passing through | inside to outside only, address translated; nothing forwarded inward |
 
-Before it takes the gateway address for the first time, `freezy-admin-router` asks the admin network
+Whenever its inside card does not hold the gateway address, `freezy-admin-router` asks the admin network
 whether something already answers there. If something does, it takes no address and fails, so it
 never runs beside a router that holds the same address.
 
 `deploy/jump/Containerfile` builds one image that serves both roles, and `deploy/jump/build-disk`
 turns it into a disk image. A machine started from that disk is told its role by the field server
 and runs the playbook on itself at every boot.
+
+### Which jump machines run
+
+On a field server installed from the image (`deploy/image/`), two settings decide, and
+`freezy-jump` changes them. Each is kept in `/etc/freezy-net/vars.yaml`, survives updates, and can be
+changed at any time, also during an event.
+
+| Setting | Values | What it does |
+|---|---|---|
+| `freezy_venue_isolation` | `true` (default), `false` | `true` runs the external machine, between the venue's VLAN and the transit VLAN. It keeps the venue's subnets apart from the field's and is the way in |
+| `freezy_admin_router` | `internal` (default), `gateway`, `none` | who is gateway and DNS for the admin network |
+
+| Venue isolation | Admin router | Machines running | Gateway and DNS for the admin network |
+|---|---|---|---|
+| on | `internal` | external, internal | the internal machine. **The default.** It needs only switches that carry tagged VLANs, of any brand |
+| on | `gateway` | external | a hardware router with its WAN port on the transit VLAN (the layout at the top of this page) |
+| off | `internal` | internal | the internal machine. The field has no way out and nothing is reachable from the venue |
+| off | `gateway` | none | the hardware router |
+| off | `none` | none | nothing on the field server; a router in bridge mode |
+| on | `none` | external | nothing. Allowed, with a warning: the admin network has no way out, and the way in still works |
+
+```
+freezy-jump status                           # the settings, each machine, its addresses, its setup
+freezy-jump venue-isolation on|off
+freezy-jump admin-router internal|gateway|none
+freezy-jump log external|internal            # what a machine logged while setting itself up
+freezy-jump restart                          # restart the machines that should run
+```
+
+- **Turning a machine on** copies the disk the image carries to `/var/lib/freezy/vm` if the machine
+  has none, defines it, and starts it. Its cards attach to the VLAN interfaces named `venue`,
+  `transit` and `admin` in `freezy_uplink_vlans`, whatever their VLAN numbers are.
+- **Turning it off** shuts it down and removes its definition. Its disk stays.
+- **The same step runs at every boot** (`freezy-jump.service`), so the machines always match the
+  settings.
+- **ssh keys** for both machines come from `/etc/freezy-net/jump_authorized_keys`, or from root's
+  own `authorized_keys` when that file is missing. There are no passwords.
+- **A machine sets itself up when it starts, and says how it went.** `status` shows each card's
+  address (the external machine's venue address is the one to ssh to) and whether its setup
+  finished. When it failed, `log` shows why, read from the machine's serial console, which the field
+  server logs in `/var/log/libvirt/qemu/`. `restart` has it try again.
+- **Team VLANs are not part of this.** The field server is their gateway and DHCP server in every
+  row of the table.
+
+Changing `freezy_admin_router` away from a hardware router, or to one, moves the gateway address
+between two devices. Unplug or reconfigure the router first: the internal machine refuses to take an
+address that something already answers on. `status` then shows its setup failed; once the router is
+out of the way, `freezy-jump restart`.
 
 ### How the transit network is chosen
 

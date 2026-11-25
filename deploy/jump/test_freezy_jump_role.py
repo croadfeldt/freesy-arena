@@ -105,7 +105,7 @@ class ImageTest(unittest.TestCase):
     def test_a_card_is_moved_onto_the_connection_made_for_it(self):
         # A new machine's cards start on NetworkManager's automatic connections, outside our zones.
         text = self.read("..", "host", "ansible", "jump_vm.yaml")
-        self.assertIn("nmcli connection up {{ item.item.connection }}", text)
+        self.assertIn("connection up {{ item.item.connection }}", text)
         self.assertIn("connection.autoconnect-priority 10", text)
 
     def test_the_only_crossing_between_zones_is_inside_to_outside(self):
@@ -130,6 +130,30 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(len(copying), 2)
         for task in copying:
             self.assertIn("not freezy_jump_files_installed", task, task.splitlines()[0])
+
+    def test_a_new_machine_does_not_wait_for_an_address_the_venue_may_never_give(self):
+        # Seen in a VM: a field server started with no venue network. Each new jump machine waited
+        # 45 seconds for an address on its outside card, and its whole setup failed.
+        with open(os.path.join(HERE, "..", "host", "ansible", "jump_vm.yaml")) as handle:
+            playbook = handle.read()
+        ups = re.findall(r"command: (nmcli .*connection up .*)", playbook)
+        self.assertTrue(ups)
+        for command in ups:
+            self.assertIn("--wait 0", command)
+
+    def test_the_machine_reports_its_setup_where_the_field_server_reads_it(self):
+        # freezy-jump on the field server reads these words from the machine's serial console.
+        with open(os.path.join(HERE, "freezy-jump-role")) as handle:
+            script = handle.read()
+        with open(os.path.join(HERE, "..", "host", "freezy-jump")) as handle:
+            marker = re.search(r'MARKER = re\.compile\(r"freezy-jump-role: \(([^)]*)\)"\)', handle.read()).group(1)
+        self.assertEqual(marker.split("|"), ["setting up", "set up", "FAILED"])
+        self.assertIn('"freezy-jump-role: setting up as %s', script)
+        self.assertIn('("set up" if code == 0 else "FAILED")', script)
+        with open(os.path.join(HERE, "freezy-jump-role.service")) as handle:
+            self.assertIn("StandardOutput=journal+console", handle.read())
+        with open(os.path.join(HERE, "Containerfile")) as handle:
+            self.assertIn("console=ttyS0", handle.read())
 
 
 if __name__ == "__main__":

@@ -32,6 +32,12 @@ jobs:
             containerfile: ./deploy/image/Containerfile
             context: .
             push: false
+          # The jump machine (deploy/jump). Only its disk image is used, carried inside the field
+          # server's image, so the container image is built and linted here and never pushed.
+          - name: freezy-jump
+            containerfile: ./deploy/jump/Containerfile
+            context: .
+            push: false
     env:
       PUSH: ${{ github.event_name == 'push' && vars.QUAY_NAMESPACE != '' && matrix.push != false }}
     steps:

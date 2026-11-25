@@ -160,16 +160,22 @@ setting in `/etc/freezy-net/vars.yaml`:
   carried inside the server's image already installed, and copied to the kept
   partition the first time a machine is turned on. So this works with no
   network. The machine is told its role when it starts.
-- **The internal machine will not fight a router.** Before it takes the
-  gateway address it checks that nothing already answers there, and refuses if
-  something does.
+- **The internal machine will not fight a router.** Whenever it does not hold
+  the gateway address it checks that nothing already answers there, and
+  refuses if something does. `freezy-jump status` shows the refusal and
+  `freezy-jump log internal` the reason.
+- **An update does not replace a machine's disk yet.** A machine keeps the
+  disk it was first given, so a newer jump image in an updated server reaches
+  it only when its disk is deleted and `freezy-jump apply` makes a new one.
+  Open: whether an update should do that by itself.
 - **VLAN numbers come from the settings.** Each machine attaches to whatever
   the venue, transit and admin VLANs are set to (`freezy_uplink_vlans`).
 - **Team VLANs are not part of this.** The field server stays gateway, DHCP
   server and filter for the six team VLANs in every row of the table. Other
   VLANs a site's router carries, such as switch management, are the site's.
-- **Keys, not passwords.** A jump machine takes the ssh keys the site put in
-  its image.
+- **Keys, not passwords.** A jump machine takes the ssh keys in the server's
+  `/etc/freezy-net/jump_authorized_keys`, or root's own `authorized_keys`
+  when that file is missing.
 
 ## Two ways to deploy
 
@@ -222,15 +228,15 @@ the plan beside it cover that work. The standalone path does not wait for it.
 ## The work, in order
 
 1. Make the draft boot to a working arena: the missing `freezy-firewalld-zones`
-   and the missing time zone link, each with a test. In review.
-2. CI: build the image, lint it, run the deployment tests.
-3. One uid for `cheesy`, 880, from a build argument.
+   and the missing time zone link, each with a test. Done.
+2. CI: build the image, lint it, run the deployment tests. Done.
+3. One uid for `cheesy`, 880, from a build argument. Done.
 4. The data partition: the mount, the arena's data folder bound from it, Kea's
    leases and the last request moved onto it, and a one-time move for a server
    that has the old locations.
 5. The boot check and the no-update-during-a-match hold.
 6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
-   internal role.
+   internal role. Done, with their disks on the root disk until step 4.
 7. The backup timer.
 8. A test that an older arena opens a newer database.
 9. The standalone installer: the kickstart and the ISO step.
