@@ -60,6 +60,12 @@ freezy_arena_user: cheesy
 freezy_arena_image_source: ""
 freezy_arena_checkout: ""
 
+# Where a field server installed from the image copies the arena's database backups (freezy-backup,
+# every five minutes). Empty copies nothing: the backups then exist only beside the database.
+# `label:NAME` is a disk whose filesystem is labelled NAME, a USB stick for one. Anything else is an
+# rsync destination, such as backup@host:/srv/freezy.
+freezy_backup_target: ""
+
 # The six team VLANs, in the arena's station order. `connection` is the NetworkManager connection (and
 # interface) that carries the VLAN on the field server; the one-time host setup creates them.
 freezy_team_vlans:
