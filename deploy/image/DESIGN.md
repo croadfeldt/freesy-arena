@@ -84,9 +84,14 @@ it does not survive is a reinstall. So:
 - **The arena waits for that step.** If the partition cannot be mounted the
   arena does not start, so an operator sees no arena and never an empty event.
 - **The install keeps it.** An installer that finds the label leaves the
-  partition alone and makes it when it is missing. The standalone path does
-  this in its own kickstart. The fleet manager path needs the manager to learn
-  it (see "Two ways to deploy").
+  partition alone and makes it when it is missing. The standalone installer
+  does this (`installer/freezy-install-plan`, run by the kickstart). The fleet
+  manager path needs the manager to learn it (see "Two ways to deploy").
+- **The installer does not erase a stranger's disk.** A disk that is empty, or
+  that holds the `freezy-data` partition, is installed on without a question.
+  A disk that holds anything else is refused until the installer is started
+  with `freezy.wipe=yes`. With more than one disk and no `freezy-data`
+  partition it asks for `freezy.disk=NAME`.
 - **Backups of the event database leave the box.** The arena writes a copy of
   its database to `arena/db/backups` after every committed match, on the same
   disk as the database, so a dead disk loses the event. `freezy-backup` copies
@@ -142,8 +147,8 @@ rule for the arena user").
   two minutes. That stops a boot check still waiting, and in one test it left
   a staged update unapplied at the restart. With `/boot` kept mounted (its own
   partition, or the kernel argument `systemd.gpt_auto=0`) both work. The
-  installer in step 9 gives `/boot` its own partition, and I'll repeat the
-  rollback proof on a server it installed.
+  installer gives `/boot` its own partition. On a server it installed, a good
+  update was kept and a bad one went back after four failed boots.
 - **Never during a match.** `freezy-os-update` is the image's update command:
   it stages the newest build, moves to another image, or rolls back, and it
   refuses while a match is running or its results are not committed, the rule
@@ -236,8 +241,13 @@ tooling.
 1. Build: `podman build -f deploy/image/Containerfile .`, with the site's files
    (host name, ssh keys, `/etc/freezy-net/vars.yaml`) in `deploy/image/site/`.
    CI also publishes the image without site files.
-2. Install: an installer ISO made from the image with `bootc-image-builder`,
-   and a kickstart from this folder that makes or keeps the data partition.
+2. Install: `installer/build-iso` adds the image and the kickstart
+   (`installer/freezy.ks`) to Fedora's own installer ISO with `mkksiso`. The
+   ISO installs with no network and nobody at the keyboard, makes or keeps the
+   data partition, and powers the machine off when it is done, so a machine
+   that starts from the installer again does not install again. I use
+   `mkksiso` and not `bootc-image-builder` because it is a stock Fedora tool
+   and the kickstart stays an ordinary file here. It has to run as root.
 3. Update: `bootc upgrade` from a registry, or `bootc switch` to an image
    carried in on a disk.
 
@@ -289,8 +299,8 @@ the plan beside it cover that work. The standalone path does not wait for it.
 6. Jump machines: the one disk image, the two settings, `freezy-jump`, and the
    internal role. Done.
 7. The backup timer. Done.
-8. A test that an older arena opens a newer database.
-9. The standalone installer: the kickstart and the ISO step.
+8. A test that an older arena opens a newer database. Done.
+9. The standalone installer: the kickstart and the ISO step. Done.
 10. The how-to, `deploy/image/README.md`: build, install, first boot, settings,
     update, roll back, back up, reinstall.
 11. The fleet manager path, once the manager can take a server.
