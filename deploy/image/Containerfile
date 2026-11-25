@@ -8,7 +8,7 @@
 # The first line builds the jump machines' disk, which this image carries so they start with no network.
 # Leave it out and the image still builds; it then cannot start jump machines.
 #
-# deploy/image/install.sh holds the list of what goes in. See deploy/image/README.md.
+# deploy/image/install.sh holds the list of what goes in. deploy/image/README.md is the how-to.
 ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:45
 
 # The arena: the same build as the repository's top-level Containerfile.

@@ -1,7 +1,7 @@
 # The field server as an image
 
-**Accepted.** 2026-11-24. Built so far: the draft already in this folder and
-the two fixes named below.
+**Accepted.** 2026-11-24. Steps 1 to 10 of the work at the end are built.
+`README.md` beside this file is the how-to.
 
 This settles how a field server is installed, updated and rebuilt as one
 Fedora image mode (bootc) image, so that someone other than me can stand one up.
@@ -31,8 +31,8 @@ things are missing:
   which `bootc install` does not make.
 - **No CI builds it.** `.github/workflows/images.yml` builds only the arena and
   Kea containers.
-- **Its README is missing.** The `Containerfile` points at
-  `deploy/image/README.md`.
+- **Its README was missing.** The `Containerfile` pointed at
+  `deploy/image/README.md`, which step 10 wrote.
 
 The first two are fixed ("Make the field-server image boot to a working
 arena"). With those fixes, an image installed to an empty disk answers
@@ -302,6 +302,6 @@ the plan beside it cover that work. The standalone path does not wait for it.
 8. A test that an older arena opens a newer database. Done.
 9. The standalone installer: the kickstart and the ISO step. Done.
 10. The how-to, `deploy/image/README.md`: build, install, first boot, settings,
-    update, roll back, back up, reinstall.
+    update, roll back, back up, reinstall. Done.
 11. The fleet manager path, once the manager can take a server.
 12. Moving the real field server over, with a backup taken first.
