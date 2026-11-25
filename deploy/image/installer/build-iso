@@ -1,0 +1,77 @@
+#!/usr/bin/bash
+# Make the field server's installer ISO: Fedora's own installer with the field-server image, the
+# kickstart (freezy.ks) and freezy-install-plan added. It installs with no network.
+#
+#   build-iso [--image REF | --image-archive FILE] [--update-from REF] [--boot-iso FILE]
+#             [--cmdline "ARGS"] OUTPUT.iso
+#
+#   --image REF        the field-server image in local container storage
+#                      (default localhost/freezy-field-server:latest)
+#   --image-archive FILE  the image as a file instead, from `podman save --format oci-archive`
+#   --update-from REF  the registry reference an installed server takes updates from, such as
+#                      quay.io/NAMESPACE/freezy-field-server:latest. Without it, `bootc upgrade` on the
+#                      server has nowhere to look, and updates are brought in with
+#                      `freezy-os-update --image`.
+#   --boot-iso FILE    Fedora's network-install ISO, of the same Fedora release as the image. Without
+#                      it, the one named below is downloaded once and kept in ~/.cache/freezy-installer.
+#   --cmdline "ARGS"   more words for the installer's kernel command line, such as
+#                      "console=ttyS0,115200" or "freezy.disk=sda"
+#
+# Run it as root: mkksiso rebuilds the ISO's UEFI boot image, and that takes root. Needs mkksiso (the
+# lorax package) and xorriso. TMPDIR needs room for the image twice.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+
+boot_url=https://dl.fedoraproject.org/pub/fedora/linux/releases/45/Everything/x86_64/iso/Fedora-Everything-netinst-x86_64-45-1.4.iso
+boot_sha256=42abc36792f91575b2f541db19110cc661864819031e57cd5f5c9ec764ebbddf
+
+image=localhost/freezy-field-server:latest archive= update_from= boot_iso= cmdline= output=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --image) image=$2; shift 2 ;;
+        --image-archive) archive=$2; shift 2 ;;
+        --update-from) update_from=$2; shift 2 ;;
+        --boot-iso) boot_iso=$2; shift 2 ;;
+        --cmdline) cmdline=$2; shift 2 ;;
+        -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+        -*) echo "build-iso: unknown option $1" >&2; exit 2 ;;
+        *) output=$1; shift ;;
+    esac
+done
+[ -n "$output" ] || { echo "build-iso: name the ISO to write" >&2; exit 2; }
+[ "$(id -u)" = 0 ] || { echo "build-iso: run this as root; rebuilding the ISO's UEFI boot image needs it" >&2; exit 1; }
+for tool in mkksiso xorriso; do
+    command -v "$tool" >/dev/null || { echo "build-iso: $tool is not installed (dnf install lorax xorriso)" >&2; exit 1; }
+done
+
+if [ -z "$boot_iso" ]; then
+    cache=${XDG_CACHE_HOME:-$HOME/.cache}/freezy-installer
+    boot_iso=$cache/${boot_url##*/}
+    if [ ! -e "$boot_iso" ]; then
+        mkdir -p "$cache"
+        echo "build-iso: downloading ${boot_url##*/}"
+        curl -fL --retry 3 -o "$boot_iso.part" "$boot_url"
+        echo "$boot_sha256  $boot_iso.part" | sha256sum -c --quiet -
+        mv "$boot_iso.part" "$boot_iso"
+    fi
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/freezy/image"
+# An OCI layout, which the installer deploys from the ISO itself.
+if [ -n "$archive" ]; then
+    echo "build-iso: reading $archive"
+    tar -x -C "$work/freezy/image" -f "$archive"
+else
+    echo "build-iso: reading $image"
+    podman save --format oci-archive "$image" | tar -x -C "$work/freezy/image"
+fi
+test -e "$work/freezy/image/index.json"
+install -m 0755 "$here/freezy-install-plan" "$work/freezy/freezy-install-plan"
+if [ -n "$update_from" ]; then printf '%s\n' "$update_from" > "$work/freezy/update-from"; fi
+
+rm -f "$output"
+mkksiso --tmp "$work" ${cmdline:+-c "$cmdline"} -V FREEZY-INSTALL \
+    --ks "$here/freezy.ks" -a "$work/freezy" "$boot_iso" "$output"
+echo "build-iso: wrote $output ($(du -h "$output" | cut -f1))"

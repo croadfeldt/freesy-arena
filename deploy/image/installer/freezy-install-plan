@@ -1,0 +1,157 @@
+#!/usr/bin/python3
+"""Decide which disk the field server is installed on and how it is laid out. The kickstart's %pre runs
+this inside the installer and includes what it prints (freezy.ks).
+
+    freezy-install-plan              print the kickstart's storage commands, or exit 1 with the reason
+
+It keeps a partition labelled freezy-data and makes one when there is none, so a reinstall keeps the
+event database, Kea's leases and the jump machines' disks (deploy/image/DESIGN.md, "Kept storage").
+
+It erases a disk without being told to only when the disk is empty or is a field server's already (it
+holds the freezy-data partition). Any other disk needs freezy.wipe=yes.
+
+Settings, on the installer's kernel command line:
+
+    freezy.disk=NAME      the disk to install on (sda, nvme0n1), when there is more than one to choose from
+    freezy.wipe=yes       erase a disk that holds something and has no freezy-data partition
+    freezy.data_gb=N      the size of a new freezy-data partition, 16 by default
+"""
+import json
+import subprocess
+import sys
+
+LABEL = "freezy-data"
+MEDIA = "/run/install/repo"
+GIB = 1024 ** 3
+# /boot, the root filesystem's minimum, and room for the partitions the firmware needs.
+BOOT_MIB = 1024
+ROOT_MIB = 20000
+SYSTEM_BYTES = (BOOT_MIB + ROOT_MIB + 1024) * 1024 ** 2
+DATA_GB = 16
+
+
+# lsblk calls these disks too: compressed memory, loop files, optical drives.
+NOT_DISKS = ("zram", "loop", "ram", "sr", "fd", "nbd")
+
+
+class Refused(Exception):
+    """Why nothing will be installed. Nothing has been changed."""
+
+
+def settings(cmdline):
+    """The freezy.* words on the kernel command line."""
+    found = {}
+    for word in cmdline.split():
+        if word.startswith("freezy.") and "=" in word:
+            key, value = word[len("freezy."):].split("=", 1)
+            found[key] = value
+    return found
+
+
+def parts(disk):
+    return [child for child in disk.get("children") or [] if child.get("type") == "part"]
+
+
+def under(device):
+    """The device and everything on it."""
+    yield device
+    for child in device.get("children") or []:
+        yield from under(child)
+
+
+def holds_the_installer(disk, media=MEDIA):
+    return any(media in (device.get("mountpoints") or []) for device in under(disk))
+
+
+def size(device):
+    return f"{int(device['size']) / GIB:.0f} GiB"
+
+
+def describe(disk):
+    inside = ", ".join(f"{p['name']} ({p.get('label') or p.get('fstype') or 'no filesystem'}, {size(p)})"
+                       for p in parts(disk))
+    return f"{disk['name']} ({size(disk)})" + (f": {inside}" if inside else "")
+
+
+def plan(devices, chosen):
+    """The storage commands for the kickstart, and a line saying what will happen."""
+    disks = [d for d in devices if d.get("type") == "disk" and not d.get("ro") and not holds_the_installer(d)
+             and not d["name"].startswith(NOT_DISKS)]
+    if not disks:
+        raise Refused("there is no disk to install on")
+    try:
+        data_gb = int(chosen.get("data_gb", DATA_GB))
+    except ValueError:
+        raise Refused(f"freezy.data_gb={chosen['data_gb']} is not a number")
+    if data_gb < 4:
+        raise Refused("freezy.data_gb must be at least 4")
+    kept = [(disk, part) for disk in disks for part in parts(disk) if part.get("label") == LABEL]
+    if len(kept) > 1:
+        raise Refused(f"more than one partition is labelled {LABEL}: "
+                      + ", ".join(part["name"] for _, part in kept) + ". Unplug the disk that is not this server's")
+    wanted = chosen.get("disk")
+    if wanted and wanted not in [d["name"] for d in disks]:
+        raise Refused(f"freezy.disk={wanted}: there is no such disk. The disks are: "
+                      + "; ".join(describe(d) for d in disks))
+
+    if kept:
+        disk, keep = kept[0]
+        if wanted and wanted != disk["name"]:
+            raise Refused(f"freezy.disk={wanted}, but the {LABEL} partition is on {disk['name']}. "
+                          "The system goes on the disk that holds it")
+        if int(disk["size"]) - int(keep["size"]) < SYSTEM_BYTES:
+            raise Refused(f"{disk['name']} has too little room beside the {LABEL} partition: "
+                          f"the system needs {SYSTEM_BYTES / GIB:.0f} GiB")
+        others = [p["name"] for p in parts(disk) if p is not keep]
+        lines = [f"ignoredisk --only-use={disk['name']}",
+                 f"clearpart --list={','.join(others)}" if others else "clearpart --none",
+                 "reqpart",
+                 f"part /boot --fstype=xfs --size={BOOT_MIB} --ondisk={disk['name']}",
+                 f"part / --fstype=xfs --size={ROOT_MIB} --grow --ondisk={disk['name']}",
+                 f"part /var/lib/freezy --onpart={keep['name']} --noformat"]
+        return lines, (f"installing on {disk['name']}; keeping {keep['name']} ({LABEL}, {size(keep)}) "
+                       f"and erasing {', '.join(others) or 'nothing else'}")
+
+    if wanted:
+        disk = next(d for d in disks if d["name"] == wanted)
+    elif len(disks) == 1:
+        disk = disks[0]
+    else:
+        raise Refused("there is more than one disk and none holds a partition labelled "
+                      f"{LABEL}. Say which with freezy.disk=NAME. The disks are: "
+                      + "; ".join(describe(d) for d in disks))
+    if int(disk["size"]) < SYSTEM_BYTES + data_gb * GIB:
+        raise Refused(f"{describe(disk)} is too small: the system and a {data_gb} GiB {LABEL} partition "
+                      f"need {(SYSTEM_BYTES + data_gb * GIB) / GIB:.0f} GiB")
+    in_use = parts(disk) or disk.get("fstype")
+    if in_use and chosen.get("wipe") != "yes":
+        raise Refused(f"{describe(disk)} holds something and has no partition labelled {LABEL}, so it is "
+                      "not a field server's disk. To erase it, start the installer with freezy.wipe=yes")
+    lines = [f"ignoredisk --only-use={disk['name']}",
+             "zerombr",
+             f"clearpart --all --initlabel --drives={disk['name']}",
+             "reqpart",
+             f"part /boot --fstype=xfs --size={BOOT_MIB} --ondisk={disk['name']}",
+             f"part /var/lib/freezy --fstype=xfs --label={LABEL} --size={data_gb * 1024} --ondisk={disk['name']}",
+             f"part / --fstype=xfs --size={ROOT_MIB} --grow --ondisk={disk['name']}"]
+    return lines, (f"installing on {disk['name']} ({size(disk)}), {'erasing it' if in_use else 'which is empty'}; "
+                   f"making a {data_gb} GiB {LABEL} partition")
+
+
+def main():
+    listing = subprocess.run(["lsblk", "-J", "-b", "-o", "NAME,TYPE,RO,SIZE,LABEL,FSTYPE,MOUNTPOINTS"],
+                             capture_output=True, text=True, check=True).stdout
+    with open("/proc/cmdline") as handle:
+        chosen = settings(handle.read())
+    try:
+        lines, said = plan(json.loads(listing)["blockdevices"], chosen)
+    except Refused as error:
+        print(f"freezy-install: NOT INSTALLING: {error}.", file=sys.stderr)
+        return 1
+    print(f"freezy-install: {said}.", file=sys.stderr)
+    print("\n".join(lines))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
