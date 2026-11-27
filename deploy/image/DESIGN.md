@@ -75,6 +75,17 @@ it does not survive is a reinstall. So:
   - `kea/`: the leases.
   - `net/`: the last network request, replayed at boot.
   - `vm/`: the jump machines' disks.
+  - `settings/`: a copy of the server's settings (next point).
+- **A reinstall keeps the server's settings.** They live in `/etc/freezy-net`,
+  which an update keeps and an install replaces. `freezy-data` keeps a copy of
+  `vars.yaml` and `backup_key` in `settings/`:
+  - a change to either file is copied there when it is made
+    (`freezy-settings.path`), and again at every boot;
+  - on the first boot after an install the copies are put back. When the image
+    holds a different file, that one stays beside it as `NAME.from-image`, so
+    the server's own settings win and the image's are not lost.
+  - "The first boot after an install" is known by a file the step writes in
+    `/etc/freezy-net`.
 - **Data in an older place is moved in once**, and only into a folder that is
   still empty, so nothing on the partition is ever overwritten:
   - from the root disk under `/var/lib/freezy`, when a partition is added to a

@@ -7,6 +7,7 @@ Everything a reinstall must not lose lives under /var/lib/freezy:
     kea/    Kea's leases
     net/    the last team network request, applied again at boot
     vm/     the jump machines' disks
+    settings/  the server's settings from /etc/freezy-net (see "Settings" below)
 
 When a partition labelled `freezy-data` exists it is mounted there, and an installer that keeps that
 partition keeps all of the above. Without one the same folders sit on the root disk and the server runs
@@ -17,10 +18,21 @@ Data found in an older place is moved in, once, and only into a folder that is s
   - where the image kept things before it had this folder (/var/lib/freezy-net and the arena account's
     named volume).
 
+Settings. A reinstall gives the server a new /etc, with the settings the image holds. A copy of each
+file in KEPT_SETTINGS is kept in settings/ so a reinstall can put the server's own back:
+  - on the first boot after an install, a kept copy replaces the file in /etc/freezy-net. The image's
+    file, when it differs, stays beside it as NAME.from-image;
+  - at every other boot, and whenever one of the files changes (freezy-settings.path runs
+    `freezy-data --save-settings`), the file in /etc/freezy-net is copied to settings/.
+The first boot after an install is known by a file this step writes in /etc/freezy-net, which an
+update keeps and an install does not.
+
 The last step writes /run/freezy-data-ready. The arena does not start without it, so a server whose data
 could not be mounted shows no arena, and never an empty event.
 """
+import filecmp
 import os
+import shutil
 import subprocess
 import sys
 
@@ -30,7 +42,8 @@ READY = "/run/freezy-data-ready"
 STAGING = "/run/freezy-data-staging"
 ARENA_USER = "cheesy"
 # name, owner, mode. The arena's container runs as its account; the rest belongs to root.
-FOLDERS = [("arena", ARENA_USER, 0o750), ("kea", "root", 0o755), ("net", "root", 0o755), ("vm", "root", 0o711)]
+FOLDERS = [("arena", ARENA_USER, 0o750), ("kea", "root", 0o755), ("net", "root", 0o755), ("vm", "root", 0o711),
+           ("settings", "root", 0o700)]
 # Where the image kept each folder's contents before /var/lib/freezy held them.
 OLD_PLACES = {
     "arena": "/var/home/cheesy/.local/share/containers/storage/volumes/freezy-arena-data/_data",
@@ -39,6 +52,13 @@ OLD_PLACES = {
 }
 # Only this file moves out of /var/lib/freezy-net; its kea folder is handled as "kea".
 ONLY = {"net": ["last-request.json"]}
+# The server's settings, and the files in them a reinstall puts back. backup_key is the key the backup
+# timer uses to reach another machine.
+SETTINGS = "/etc/freezy-net"
+KEPT_SETTINGS = ["vars.yaml", "backup_key"]
+# Written in SETTINGS once the kept copies have been put back. An update keeps /etc, so it stays; an
+# install makes a new /etc, so it is gone.
+RESTORED = ".settings-restored"
 
 
 def log(message):
@@ -97,6 +117,68 @@ def bring_in_old_places(root, old_places=None):
     return moved
 
 
+def copy(source, destination):
+    """Copy a file with its mode, never leaving half a file under the name. The copy is on the disk
+    when this returns: a server whose power is cut a moment later still has it."""
+    shutil.copy2(source, destination + ".new")
+    flush(destination + ".new")
+    os.replace(destination + ".new", destination)
+    flush(os.path.dirname(destination))
+
+
+def flush(path):
+    handle = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
+def same(one, other):
+    return os.path.exists(one) and os.path.exists(other) and filecmp.cmp(one, other, shallow=False)
+
+
+def restore_settings(settings, kept, names=None):
+    """On the first boot after an install, put the kept settings back. Returns the names put back."""
+    marker = os.path.join(settings, RESTORED)
+    if os.path.exists(marker):
+        return []
+    os.makedirs(settings, exist_ok=True)
+    restored = []
+    for name in names or KEPT_SETTINGS:
+        ours, live = os.path.join(kept, name), os.path.join(settings, name)
+        if not os.path.exists(ours) or same(ours, live):
+            continue
+        if os.path.exists(live):
+            os.replace(live, live + ".from-image")
+        copy(ours, live)
+        restored.append(name)
+    with open(marker, "w"):
+        pass
+    return restored
+
+
+def save_settings(settings, kept, names=None):
+    """Make the kept copies match the settings in use. Returns the names that changed.
+
+    It does nothing until the kept copies have been put back, so the settings a new install came with
+    never replace the server's own."""
+    if not os.path.exists(os.path.join(settings, RESTORED)):
+        return []
+    changed = []
+    for name in names or KEPT_SETTINGS:
+        ours, live = os.path.join(kept, name), os.path.join(settings, name)
+        if os.path.exists(live):
+            if not same(ours, live):
+                copy(live, ours)
+                changed.append(name)
+        elif os.path.exists(ours):
+            os.unlink(ours)
+            flush(kept)
+            changed.append(name)
+    return changed
+
+
 def partition_device():
     """The device labelled freezy-data, or None."""
     subprocess.run(["udevadm", "settle", "--timeout=15"], check=False)
@@ -109,8 +191,15 @@ def mount(device, where):
     subprocess.run(["mount", "-o", "nodev,nosuid", device, where], check=True)
 
 
-def main():
+def main(argv):
     import pwd
+    kept = os.path.join(ROOT, "settings")
+    if argv[1:] == ["--save-settings"]:
+        # Without the ready file the partition may not be mounted, and the copy would go to the root disk.
+        if os.path.exists(READY):
+            for name in save_settings(SETTINGS, kept):
+                log(f"kept the change to {SETTINGS}/{name}")
+        return 0
     try:
         os.unlink(READY)
     except FileNotFoundError:
@@ -135,10 +224,16 @@ def main():
     lay_out(ROOT, {"root": (0, 0), ARENA_USER: (account.pw_uid, account.pw_gid)})
     # A new filesystem has no SELinux labels. The containers and libvirt label what is inside each folder.
     subprocess.run(["restorecon", ROOT] + [os.path.join(ROOT, name) for name, _, _ in FOLDERS], check=False)
+    for name in restore_settings(SETTINGS, kept):
+        log(f"put back {SETTINGS}/{name} from before the install"
+            + (f"; the image's is beside it as {name}.from-image"
+               if os.path.exists(os.path.join(SETTINGS, name + ".from-image")) else ""))
+    subprocess.run(["restorecon", "-R", SETTINGS], check=False)
+    save_settings(SETTINGS, kept)
     with open(READY, "w"):
         pass
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))
