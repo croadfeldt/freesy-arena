@@ -1,0 +1,9 @@
+# Copies the server's settings to the kept data, so a reinstall can put them back (freezy-data).
+[Unit]
+Description=Keep the Freezy Arena field server's settings
+After=freezy-data.service
+Requires=freezy-data.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/freezy-data --save-settings

@@ -1,0 +1,11 @@
+# When a settings file a reinstall must keep changes, copy it to the kept data (freezy-settings.service).
+[Unit]
+Description=Watch the Freezy Arena field server's settings
+After=freezy-data.service
+
+[Path]
+PathChanged=/etc/freezy-net/vars.yaml
+PathChanged=/etc/freezy-net/backup_key
+
+[Install]
+WantedBy=multi-user.target

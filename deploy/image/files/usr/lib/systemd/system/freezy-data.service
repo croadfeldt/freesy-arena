@@ -1,11 +1,13 @@
 # Mounts the kept data partition when there is one and lays out /var/lib/freezy (freezy-data). It runs
 # before anything that reads or writes there, and before any account's services start, the arena's
 # included. libvirt is named because it starts the jump machines by itself as soon as it is up: started
-# before this step, they would open disks that are about to be moved or hidden under the mount.
+# before this step, they would open disks that are about to be moved or hidden under the mount. The
+# steps that read the server's settings are named because this one puts the settings back after an
+# install.
 [Unit]
 Description=Mount and lay out the Freezy Arena field server's kept data
 After=local-fs.target systemd-tmpfiles-setup.service systemd-sysusers.service
-Before=systemd-user-sessions.service virtqemud.service libvirt-guests.service
+Before=systemd-user-sessions.service virtqemud.service libvirt-guests.service freezy-host-network.service freezy-jump.service freezy-backup.service
 
 [Service]
 Type=oneshot

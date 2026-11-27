@@ -117,5 +117,5 @@ chmod -R go-w /usr/libexec/freezy-net-helper /usr/libexec/freezy-image-import /u
 firewall-offline-cmd --add-port=8080/tcp --add-port=1750/tcp --add-port=1160/udp
 systemctl enable firewalld sshd virtqemud.socket virtnetworkd.socket virtstoraged.socket \
     libvirt-guests.service freezy-data.service freezy-images.service freezy-host-network.service freezy-host-setup.service \
-    freezy-firewall.service freezy-net.path freezy-jump.service freezy-backup.timer greenboot-healthcheck.service
+    freezy-firewall.service freezy-net.path freezy-jump.service freezy-backup.timer freezy-settings.path greenboot-healthcheck.service
 systemctl --global enable freezy-arena-image.service

@@ -96,7 +96,8 @@ To check the server: `systemctl --failed` lists nothing, and
 
 ## 5. Change settings on a running server
 
-The server's settings are in `/etc/freezy-net/vars.yaml`. Updates leave that file alone.
+The server's settings are in `/etc/freezy-net/vars.yaml`. An update leaves that file alone, and a
+reinstall puts it back (see "Reinstall").
 
 - **Which jump machines run**, and who routes the admin network: `freezy-jump venue-isolation on|off`
   and `freezy-jump admin-router internal|gateway|none`. They write the file and apply the change.
@@ -159,12 +160,18 @@ Start the server from the installer again. It finds the `freezy-data` partition,
 replaces everything else. The event database, Kea's leases and the jump machines' disks are on that
 partition, so the arena comes back with the event it had.
 
-What a reinstall does lose is anything you changed on the server by hand, `/etc/freezy-net/vars.yaml`
-included. Keep your settings in `deploy/image/site/` and build them into the image.
+The server's settings come back too. A copy of `/etc/freezy-net/vars.yaml` and of the backup key is
+kept on that partition each time one changes, and the first boot after a reinstall puts them back.
+If the new image holds different settings, the server's own win and the image's are left beside
+them as `/etc/freezy-net/vars.yaml.from-image`. To take the image's, copy that file over
+`vars.yaml` and restart.
+
+Anything else you changed on the server by hand is lost: the time zone, and keys you added outside
+the image. Keep those in `deploy/image/site/`.
 
 ## What I have and have not run
 
 Each step here was run in virtual machines, under BIOS and UEFI: the build, the install, the
-reinstall that keeps its data, an update carried in, the automatic and manual way back, and the
-backup to a labelled disk. I have not yet run it on real hardware or from a real USB stick, updated
-from a registry, or backed up to an rsync destination on another machine.
+reinstall that keeps its data and its settings, an update carried in, the automatic and manual way
+back, and the backup to a labelled disk. I have not yet run it on real hardware or from a real USB
+stick, updated from a registry, or backed up to an rsync destination on another machine.
